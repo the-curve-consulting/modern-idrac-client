@@ -47,7 +47,7 @@ type Actions struct {
 
 // Options configures Run.
 type Options struct {
-	Title string // window title, e.g. "pmx01 (192.168.11.221)"
+	Title string // window title, e.g. "server01 (192.0.2.10)"
 	// Connect opens (or re-opens) the console session.
 	Connect  func(ctx context.Context) (Backend, error)
 	Actions  Actions

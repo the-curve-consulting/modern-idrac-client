@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
 # Build the idrac CLI (only when sources changed) and run it with the given args.
 #
-#   ./run.sh -host 192.168.11.221 info
-#   ./run.sh -host 192.168.11.221 viewer      # graphical console
-#   ./run.sh viewer -demo                     # viewer test screen, no iDRAC needed
-#   ./run.sh                                  # prints usage
+#   ./run.sh                             # graphical manager
+#   ./run.sh -host 192.0.2.10 info
+#   ./run.sh -host 192.0.2.10 kvm        # console window
+#   ./run.sh kvm demo                    # console test screen, no iDRAC needed
+#   ./run.sh -h                          # usage
 #
 # Env: IDRAC_BUILD=1 forces a rebuild; IDRAC_NOGUI=1 builds without the viewer
 # (pure Go, no cgo/OpenGL needed).

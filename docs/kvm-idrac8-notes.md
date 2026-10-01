@@ -1,12 +1,12 @@
 # iDRAC7/8 Java KVM viewer vs iDRAC6 — wire-protocol differences for the Go client
 
 Date: 2026-09-30. Target: extend the Go client written against the iDRAC6 viewer
-(`avctKVM.jar` fw 2.92) to the iDRAC7/8 viewer (`avctKVM.jar` served by 192.168.11.221).
+(`avctKVM.jar` fw 2.92) to the iDRAC7/8 viewer (`avctKVM.jar` served by <idrac8-host>).
 
 Sources: CFR-decompiled jars in the scratchpad (`src6d/`, `src8d/`, string tables
 `z6.tsv`/`z8.tsv`), obfuscated 2-D string tables decoded by reflection (`dump/Dump.java`
 run against the jars), `javap -c` where CFR output was ambiguous, and unauthenticated
-live probes (TCP + APCP + TLS ClientHello only, no login) against 192.168.11.221:5900/5901.
+live probes (TCP + APCP + TLS ClientHello only, no login) against <idrac8-host>:5900/5901.
 Class names below are the obfuscated ones in each jar; "6:" = iDRAC6 jar, "8:" = iDRAC8 jar.
 
 ## TL;DR — top differences
@@ -112,7 +112,7 @@ is an "APCP version" (`d.d.b.e(int)` → `L()`, default 256). caps bit 0x200 →
 The reply's major/minor bytes overwrite W/X (`d.a.a` → `d.d.b.d(int,int)`), so **the negotiated version is what the
 server echoes**.
 
-### 2.3 Live probe results (192.168.11.221:5900, unauthenticated)
+### 2.3 Live probe results (<idrac8-host>:5900, unauthenticated)
 
 | request | reply |
 |---|---|

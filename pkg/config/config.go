@@ -6,11 +6,11 @@
 // $XDG_CONFIG_HOME/idrac/hosts.json (default ~/.config/idrac/hosts.json).
 //
 //	{
-//	  "defaults": { "username": "root", "password_ref": "op://Infra/iDRAC office/password" },
+//	  "defaults": { "username": "root", "password_ref": "op://Vault/Item/password" },
 //	  "hosts": {
-//	    "r710":  { "address": "192.168.10.162", "generation": "idrac6" },
-//	    "pmx01": { "address": "192.168.11.221" },
-//	    "pmx02": { "address": "192.168.11.222", "password_env": "PMX02_IDRAC_PASS" }
+//	    "legacy01": { "address": "192.0.2.20", "generation": "idrac6" },
+//	    "server01": { "address": "192.0.2.10" },
+//	    "server02": { "address": "192.0.2.11", "password_env": "IDRAC_SERVER02_PASSWORD" }
 //	  }
 //	}
 //

@@ -152,7 +152,7 @@ func (g *globals) resolveTarget() error {
 		if names := g.cfg.Names(); len(names) > 0 {
 			return fmt.Errorf("no host given: use -host <name|address> (configured: %s)", strings.Join(names, ", "))
 		}
-		return errors.New("no host given: use -host <address>, e.g. idrac -host 192.168.11.221 kvm")
+		return errors.New("no host given: use -host <address>, e.g. idrac -host 192.0.2.10 kvm")
 	}
 	g.target = g.cfg.Resolve(g.host)
 	if g.user != "" {
@@ -206,13 +206,13 @@ func usage(fs *flag.FlagSet) {
 	}
 	fmt.Fprintf(os.Stderr, `
 Quick start (no credentials needed):
-  idrac -host 192.168.11.221 probe        # detect generation / Redfish
-  idrac -host 192.168.11.221 kvm probe    # console transport handshake
+  idrac -host 192.0.2.10 probe        # detect generation / Redfish
+  idrac -host 192.0.2.10 kvm probe    # console transport handshake
 Then, with IDRAC_PASSWORD set (or a hosts file at %s):
-  idrac -host 192.168.11.221 racadm getsysinfo
-  idrac -host 192.168.11.221 info
-  idrac -host 192.168.11.221 kvm                      # console window
-  idrac -host 192.168.11.221 kvm screenshot shot.png
+  idrac -host 192.0.2.10 racadm getsysinfo
+  idrac -host 192.0.2.10 info
+  idrac -host 192.0.2.10 kvm                      # console window
+  idrac -host 192.0.2.10 kvm screenshot shot.png
 `, config.DefaultPath())
 }
 

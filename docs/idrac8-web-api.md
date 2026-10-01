@@ -1,6 +1,6 @@
 # Dell iDRAC8 HTTP API Reference (for a Go client)
 
-Target devices: `https://192.168.11.221` and `.222/.223/.224/.226`.
+Target devices: `https://<idrac8-host>` (five identical units surveyed).
 
 **Generation / firmware (verified live, unauthenticated):**
 
@@ -10,9 +10,9 @@ Target devices: `https://192.168.11.221` and `.222/.223/.224/.226`.
 | Firmware | **2.86.86.86 (Build 06)** (short `2.86.06`) — same on all five nodes | `GET /session?aimGetProp=fwVersionFull` → `2.86.86.86(Build06)` |
 | License | Enterprise | `GET /data?get=prodClassName` → `Enterprise` |
 | Redfish | RedfishVersion **1.4.0**, ServiceRoot **v1_3_0** | `GET /redfish/v1` |
-| Service tag / MAC | in ServiceRoot `Oem.Dell` (e.g. `698R7J2`, `10:98:36:B1:15:FD`) | `GET /redfish/v1` |
+| Service tag / MAC | in ServiceRoot `Oem.Dell` (e.g. `ABC1234`, `00:11:22:33:44:55`) | `GET /redfish/v1` |
 
-All five hosts are identical: iDRAC8 13G, firmware 2.86.86.86, Redfish 1.4.0. Service tags: .221=`698R7J2`, .222=`97BGZG2`, .223=`7C019F2`, .224=`2RXFZ42`, .226=`8950KF2`.
+All five hosts are identical: iDRAC8 13G, firmware 2.86.86.86, Redfish 1.4.0.
 
 **Webserver behaviour that affects a Go client:**
 - Static assets are stored **pre-gzipped**. You MUST send `Accept-Encoding: gzip` (curl `--compressed`) to fetch HTML/JS/CSS, otherwise `Content-Type: application/x-gzip` raw bytes come back.
@@ -43,7 +43,7 @@ The GUI is served by an Appweb server. JS confirmed by downloading unauthenticat
 | `/data?get=prodClassName` | GET/POST | `text/xml` | `<prodClassName>Enterprise</prodClassName><status>ok</status>` |
 | `/session?aimGetProp=fwVersion` | GET | `application/json` | `{"aimGetProp":{"fwVersion":"2.86.06","status":"OK"}}` |
 | `/session?aimGetProp=fwVersionFull` | GET | JSON | `2.86.86.86(Build06)` |
-| `/session?aimGetProp=hostname` | GET | JSON | e.g. `idrac-698R7J2` |
+| `/session?aimGetProp=hostname` | GET | JSON | e.g. `idrac-<service-tag>` |
 | `/session?aimGetBoolProp=pam_bool_sso_enabled` | GET | JSON | `{"aimGetBoolProp":{"pam_bool_sso_enabled":"false","status":"OK"}}` |
 | `/session?aimGetIntProp=scl_int_enabled` | GET | JSON | `{"aimGetIntProp":{"scl_int_enabled":0,"status":"OK"}}` |
 | `/session?aimGetIntProp=gui_int_control_basegui` | GET | JSON | `1` |

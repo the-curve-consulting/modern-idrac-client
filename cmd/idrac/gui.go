@@ -329,10 +329,10 @@ func (m *manager) editHost(name string) {
 	}
 	nameE := widget.NewEntry()
 	nameE.SetText(name)
-	nameE.SetPlaceHolder("pmx01")
+	nameE.SetPlaceHolder("server01")
 	addrE := widget.NewEntry()
 	addrE.SetText(h.Address)
-	addrE.SetPlaceHolder("192.168.11.221")
+	addrE.SetPlaceHolder("192.0.2.10 or idrac.example.com")
 	genS := widget.NewSelect([]string{"Detect automatically", "iDRAC6", "iDRAC7", "iDRAC8", "iDRAC9", "Demo (no hardware)"}, nil)
 	gens := []config.Generation{config.GenAuto, config.GenIDRAC6, config.GenIDRAC7, config.GenIDRAC8, config.GenIDRAC9, config.GenDemo}
 	genS.SetSelectedIndex(0)
@@ -359,13 +359,13 @@ func (m *manager) editHost(name string) {
 			secret.SetPlaceHolder("stored in plain text in the hosts file")
 			secret.Show()
 		case passwordModes[2]:
-			plain.SetPlaceHolder("PMX01_IDRAC_PASSWORD")
+			plain.SetPlaceHolder("IDRAC_SERVER01_PASSWORD")
 			plain.Show()
 		case passwordModes[3]:
 			plain.SetPlaceHolder("op://Vault/Item/password")
 			plain.Show()
 		case passwordModes[4]:
-			plain.SetPlaceHolder("pass show idrac/pmx01")
+			plain.SetPlaceHolder("pass show idrac/server01")
 			plain.Show()
 		}
 	}

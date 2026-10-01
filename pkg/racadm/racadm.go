@@ -1,7 +1,7 @@
 // Package racadm runs racadm commands on an iDRAC over SSH.
 //
-// Every iDRAC generation exposes racadm through its SSH service (the r710's
-// iDRAC6 and the iDRAC8s both run OpenSSH 7.4 with modern algorithms), so this
+// Every iDRAC generation exposes racadm through its SSH service (iDRAC6 2.9x
+// and iDRAC8 2.8x both run OpenSSH 7.4 with modern algorithms), so this
 // is the one management surface that is identical across the fleet.
 package racadm
 

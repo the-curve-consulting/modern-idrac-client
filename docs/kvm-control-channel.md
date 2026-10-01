@@ -51,8 +51,8 @@ Live (unauthenticated, no login sent):
 
 | device | control (type 3) | video (type 4) |
 |--------|------------------|----------------|
-| iDRAC6 192.168.10.162 | ver 1.0, caps=4 -> TLS 1.2 `TLS_RSA_WITH_AES_128_GCM_SHA256` | ver 1.0, **caps=1 -> clear text** |
-| iDRAC8 192.168.11.221 | ver 2.34, caps=4 -> TLS 1.2 ECDHE | ver 2.34, caps=4 -> TLS |
+| iDRAC6 <idrac6-host> | ver 1.0, caps=4 -> TLS 1.2 `TLS_RSA_WITH_AES_128_GCM_SHA256` | ver 1.0, **caps=1 -> clear text** |
+| iDRAC8 <idrac8-host> | ver 2.34, caps=4 -> TLS 1.2 ECDHE | ver 2.34, caps=4 -> TLS |
 
 The server sends nothing after the TLS handshake until the client's Login
 Request. Go needs `InsecureSkipVerify`, `MinVersion=TLS1.0` and an explicit
@@ -313,7 +313,7 @@ implemented in `transport.go` / `packets.go` / `session.go`.
 9. Launch parameters: nothing to do in this package (`password=` alias is
    the launcher's concern).
 
-Live, unauthenticated, 192.168.11.221:5900: APCP type 3 and 4 both answer
+Live, unauthenticated, <idrac8-host>:5900: APCP type 3 and 4 both answer
 2.34 / caps 4 and complete TLS 1.2 (`TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384`).
 
 Additional unverified items for iDRAC8: the CSCO length encoding (assumed

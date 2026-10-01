@@ -4,11 +4,9 @@
     "password_ref": "op://<vault>/<item>/password"
   },
   "hosts": {
-    "r710":  { "address": "192.168.10.162", "generation": "idrac6", "description": "PowerEdge R710 (iDRAC6 fw 2.92, TLS 1.0 web UI, no Redfish)" },
-    "pmx-a": { "address": "192.168.11.221", "generation": "idrac8", "description": "office Proxmox node (check which pmx0x this is)" },
-    "pmx-b": { "address": "192.168.11.222", "generation": "idrac8" },
-    "pmx-c": { "address": "192.168.11.223", "generation": "idrac8" },
-    "pmx-d": { "address": "192.168.11.224", "generation": "idrac8" },
-    "pmx-e": { "address": "192.168.11.226", "generation": "idrac8" }
+    "server01": { "address": "192.0.2.10", "description": "generation is detected automatically" },
+    "server02": { "address": "192.0.2.11", "generation": "idrac8", "password_env": "IDRAC_SERVER02_PASSWORD" },
+    "legacy01": { "address": "192.0.2.20", "generation": "idrac6", "description": "iDRAC6: legacy web API, no Redfish" },
+    "demo":     { "address": "demo", "generation": "demo", "description": "canned data, no hardware needed" }
   }
 }

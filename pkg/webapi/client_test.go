@@ -3,12 +3,12 @@ package webapi
 import "testing"
 
 func TestParseRoot(t *testing.T) {
-	body := []byte(`<?xml version="1.0"?><root><status>ok</status><pwState>1</pwState><sysDesc>PowerEdge R710</sysDesc><sensor><name>Temp</name><val>21</val></sensor></root>`)
+	body := []byte(`<?xml version="1.0"?><root><status>ok</status><pwState>1</pwState><sysDesc>PowerEdge R730</sysDesc><sensor><name>Temp</name><val>21</val></sensor></root>`)
 	m, err := parseRoot(body)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if m["status"] != "ok" || m["pwState"] != "1" || m["sysDesc"] != "PowerEdge R710" {
+	if m["status"] != "ok" || m["pwState"] != "1" || m["sysDesc"] != "PowerEdge R730" {
 		t.Fatalf("got %v", m)
 	}
 	if m["sensor"] != "<name>Temp</name><val>21</val>" {
@@ -17,15 +17,15 @@ func TestParseRoot(t *testing.T) {
 }
 
 func TestParseJNLP(t *testing.T) {
-	body := []byte(`<jnlp codebase="https://192.168.11.221:443/"><application-desc main-class="com.avocent.idrac.kvm.Main">
-<argument>ip=192.168.11.221</argument><argument>kmport=5900</argument><argument>vport=5900</argument>
+	body := []byte(`<jnlp codebase="https://192.0.2.10:443/"><application-desc main-class="com.avocent.idrac.kvm.Main">
+<argument>ip=192.0.2.10</argument><argument>kmport=5900</argument><argument>vport=5900</argument>
 <argument>user=472983611</argument><argument>passwd=1839471623</argument><argument>apcp=1</argument><argument>version=2</argument><argument>vmprivilege=true</argument><argument>title=idrac-go</argument>
 </application-desc></jnlp>`)
 	l, err := ParseJNLP(body)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if l.Host != "192.168.11.221" || l.KMPort != 5900 || l.User != "472983611" || l.Password != "1839471623" || !l.APCP || !l.VMPrivilege {
+	if l.Host != "192.0.2.10" || l.KMPort != 5900 || l.User != "472983611" || l.Password != "1839471623" || !l.APCP || !l.VMPrivilege {
 		t.Fatalf("got %+v", l)
 	}
 }

@@ -125,16 +125,16 @@ func TestDataTable(t *testing.T) {
 
 func TestHostEditPersists(t *testing.T) {
 	m := testManager(t)
-	m.g.cfg.Set("pmx01", config.Host{Address: "192.168.11.221", PasswordEnv: "X"})
+	m.g.cfg.Set("server01", config.Host{Address: "192.0.2.10", PasswordEnv: "X"})
 	if err := m.g.cfg.Save(); err != nil {
 		t.Fatal(err)
 	}
-	onUI(func() bool { m.reloadHosts("pmx01"); return true })
-	if m.selected != "pmx01" || len(m.names) != 2 {
+	onUI(func() bool { m.reloadHosts("server01"); return true })
+	if m.selected != "server01" || len(m.names) != 2 {
 		t.Fatalf("selected %q names %v", m.selected, m.names)
 	}
 	back, err := config.Load(m.g.cfg.Path())
-	if err != nil || back.Hosts["pmx01"].PasswordEnv != "X" {
+	if err != nil || back.Hosts["server01"].PasswordEnv != "X" {
 		t.Fatalf("reload: %v %+v", err, back.Hosts)
 	}
 }

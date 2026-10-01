@@ -1,6 +1,6 @@
 # Dell iDRAC6 HTTP API Reference (for a Go client)
 
-Target device: `https://192.168.10.162` (Dell PowerEdge R710, iDRAC6 Enterprise), firmware **2.92 (Build 05)**.
+Target device: `https://<idrac6-host>` (Dell PowerEdge R710, iDRAC6 Enterprise), firmware **2.92 (Build 05)**.
 
 This document mirrors the structure of `idrac8-web-api.md` (sections A and B). **iDRAC6 has no Redfish and no `/sysmgmt` or `/session` JSON API** — there is no section C. Everything the GUI does rides the single legacy XML API `/data?get=` / `/data?set=` plus a handful of `.esp`/`cgi-bin` endpoints. Where behaviour differs from iDRAC8 it is called out inline and summarised at the end.
 
@@ -8,7 +8,7 @@ This document mirrors the structure of `idrac8-web-api.md` (sections A and B). *
 
 The entire web UI is served from an **Mbedthis-Appweb/2.4.2** server. All functional pages require an authenticated session, but the complete UI source (HTML + JS + the server-side `.esp`/`.jsesp` templates) was recovered by **extracting the firmware image** (`firmimg.d6` → `root.cramfs`, web root at `/usr/local/www`), so every endpoint, parameter name, field-list and the CSRF machinery below is read directly from the shipping code rather than inferred. Live behaviour (status codes, headers, cookie, the XML envelope, TLS, the unauthenticated oracle, and `authResult=1`) was confirmed against the live device with `curl -sk --ciphers 'DEFAULT@SECLEVEL=0'`. Exactly **one** bogus-credential login (`x`/`x`) was issued; no real/guessed passwords were tried.
 
-Sources cited below as: **(JS)** = read from the firmware UI source; **(live)** = probed against 192.168.10.162; **(bin)** = extracted from the compiled Appweb modules `libDataHandler.so` / `libavctAuth.so` / `guiDataServer`; **(docs)** = third-party writeups / captured artifacts.
+Sources cited below as: **(JS)** = read from the firmware UI source; **(live)** = probed against <idrac6-host>; **(bin)** = extracted from the compiled Appweb modules `libDataHandler.so` / `libavctAuth.so` / `guiDataServer`; **(docs)** = third-party writeups / captured artifacts.
 
 **Generation / firmware (verified live, unauthenticated):**
 

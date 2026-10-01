@@ -1,11 +1,11 @@
 # idrac — native Go client for Dell iDRAC6/7/8/9
 
-One binary that replaces the Java tooling for the office iDRACs, as a
+One binary that replaces the Java tooling for Dell iDRACs, as a
 graphical manager and as a CLI: inventory, power, sensors, logs, racadm, raw
 Redfish / legacy-web calls, and the **remote console (KVM) without Java** — a
 native console window, screenshots, key and mouse injection, and a VNC bridge.
 
-| Surface | iDRAC6 (r710) | iDRAC7/8 (pmx nodes) | iDRAC9 |
+| Surface | iDRAC6 | iDRAC7/8 | iDRAC9 |
 |---|---|---|---|
 | racadm over SSH | yes | yes | yes |
 | Redfish | n/a | yes | yes |
@@ -45,7 +45,7 @@ racadm tab, or `idrac -host <h> ssh` in a terminal.
 ```sh
 ./build.sh          # vet + test + build bin/idrac for this machine
 ./build.sh all      # also linux/arm64, darwin/arm64, windows/amd64 into bin/
-./run.sh <args>     # build if sources changed, then run: ./run.sh -host r710 kvm
+./run.sh <args>     # build if sources changed, then run: ./run.sh -host server01 kvm
 go build -o idrac ./cmd/idrac   # plain go build works too
 ```
 
@@ -82,22 +82,22 @@ on the terminal (hidden input).
 
 ```
 idrac hosts                         # what is configured
-idrac -host r710 probe              # detect generation / Redfish (no credentials)
-idrac -host r710 info               # model, service tag, firmware, power, health
-idrac -host r710 power [status|on|off|graceful|reset|cycle|nmi]
-idrac -host r710 sensors
-idrac -host r710 sel [-n 100] [clear]
-idrac -host pmx-a lclog
-idrac -host r710 led on|off
-idrac -host r710 boot pxe|hdd|cd|bios|usb|none
-idrac -host r710 racadm getsysinfo  # any racadm command, all generations
-idrac -host r710 ssh                # interactive iDRAC shell
-idrac -host pmx-a redfish get /redfish/v1/Systems/System.Embedded.1
-idrac -host pmx-a redfish post /redfish/v1/Systems/System.Embedded.1/Actions/ComputerSystem.Reset '{"ResetType":"On"}'
-idrac -host pmx-a jobs | vmedia | accounts | bios | attrs | scp export | update <uri> | reset-idrac
-idrac -host r710 web get sysDesc,pwState   # raw legacy /data?get= call
-idrac -host r710 web set pwState=1         # raw legacy /data?set= call
-idrac -host r710 web jnlp                  # the console JNLP the browser would get
+idrac -host server01 probe              # detect generation / Redfish (no credentials)
+idrac -host server01 info               # model, service tag, firmware, power, health
+idrac -host server01 power [status|on|off|graceful|reset|cycle|nmi]
+idrac -host server01 sensors
+idrac -host server01 sel [-n 100] [clear]
+idrac -host server01 lclog
+idrac -host server01 led on|off
+idrac -host server01 boot pxe|hdd|cd|bios|usb|none
+idrac -host server01 racadm getsysinfo  # any racadm command, all generations
+idrac -host server01 ssh                # interactive iDRAC shell
+idrac -host server01 redfish get /redfish/v1/Systems/System.Embedded.1
+idrac -host server01 redfish post /redfish/v1/Systems/System.Embedded.1/Actions/ComputerSystem.Reset '{"ResetType":"On"}'
+idrac -host server01 jobs | vmedia | accounts | bios | attrs | scp export | update <uri> | reset-idrac
+idrac -host legacy01 web get sysDesc,pwState # raw legacy /data?get= call (iDRAC6)
+idrac -host legacy01 web set pwState=1       # raw legacy /data?set= call
+idrac -host legacy01 web jnlp                # the console JNLP the browser would get
 ```
 
 ### Remote console: `kvm`
@@ -105,16 +105,16 @@ idrac -host r710 web jnlp                  # the console JNLP the browser would 
 One command covers the console. With no verb it opens the viewer window.
 
 ```
-idrac -host 192.168.11.221 kvm                        # console window (same as: kvm view)
-idrac -host 192.168.11.221 kvm view -view-only
-idrac -host 192.168.11.221 kvm -record session.rec    # window, also saving the raw video stream
-idrac -host 192.168.11.221 kvm screenshot out.png
-idrac -host 192.168.11.221 kvm key F2                 # F1..F24, Return, Escape, ctrl+alt+F2, a
-idrac -host 192.168.11.221 kvm type "root\n"          # \n = Enter
-idrac -host 192.168.11.221 kvm mouse 640 400 click
-idrac -host 192.168.11.221 kvm ctrl-alt-del
-idrac -host 192.168.11.221 kvm vnc                    # serve the console to any VNC viewer on 127.0.0.1:5901
-idrac -host 192.168.11.221 kvm probe                  # APCP + TLS handshake only, no login
+idrac -host server01 kvm                        # console window (same as: kvm view)
+idrac -host server01 kvm view -view-only
+idrac -host server01 kvm -record session.rec    # window, also saving the raw video stream
+idrac -host server01 kvm screenshot out.png
+idrac -host server01 kvm key F2                 # F1..F24, Return, Escape, ctrl+alt+F2, a
+idrac -host server01 kvm type "root\n"          # \n = Enter
+idrac -host server01 kvm mouse 640 400 click
+idrac -host server01 kvm ctrl-alt-del
+idrac -host server01 kvm vnc                    # serve the console to any VNC viewer on 127.0.0.1:5901
+idrac -host server01 kvm probe                  # APCP + TLS handshake only, no login
 idrac kvm replay session.rec                          # play a recording in the window
 idrac kvm replay session.rec out.png                  # decode it headless, print decoder stats
 idrac kvm demo                                        # test pattern: checks rendering and input locally
@@ -163,26 +163,25 @@ Add `-v` for request logging, `-trace` to hex-dump console protocol packets,
 
 ## Verification status
 
-No iDRAC credentials were available while this was built, so everything that
-needs a login is implemented from the firmware's own UI source, Dell's Redfish
-documentation and the decompiled `avctKVM.jar`, and has **not** been run against
-a device yet. What *was* exercised live (unauthenticated) on the R710 (iDRAC6
-2.92) and the five iDRAC8 2.86 hosts:
+Confirmed on real hardware (iDRAC8, firmware 2.86): console login, ASpeed
+video, the console window and the VNC bridge.
 
-- generation detection (`probe`), Redfish service root and `$metadata`
-- the console transport: APCP handshake and TLS upgrade on the control and
-  video sockets of both generations (`kvm probe`)
-- the login endpoints' *failure* shape (one deliberate bad login per device,
-  done by hand during the survey; the tool itself never retries a login)
-- SSH algorithm negotiation for racadm
+Exercised without credentials on iDRAC6 (firmware 2.92) and iDRAC8: generation
+detection, the Redfish service root, SSH negotiation for racadm, and the
+console transport (APCP handshake and TLS upgrade) via `kvm probe`.
 
-First real run checklist, in this order, with `-v` (and `-trace` for kvm):
+Implemented from the firmware's own UI source, Dell's Redfish documentation
+and the Dell viewer, but not yet run against a device: the iDRAC6 console path
+(DVC video), the legacy web API commands, and the less common Redfish calls
+(jobs, virtual media, BIOS, configuration profiles, firmware update).
 
-1. `idrac -host r710 racadm getsysinfo` and `idrac -host <pmx> racadm getsysinfo`
-2. `idrac -host <pmx> info`, `sensors`, `sel` (Redfish) and `idrac -host r710 info` (legacy API)
-3. `idrac -host r710 kvm screenshot r710.png` — DVC video path
-4. `idrac -host <pmx> kvm screenshot pmx.png` — ASpeed JPEG video path
-5. `idrac -host r710 kvm vnc` and connect a viewer; test keyboard and mouse
+Suggested first run on a new generation, with `-v` (and `-trace` for kvm):
+
+1. `idrac -host <host> probe` and `idrac -host <host> kvm probe` (no credentials)
+2. `idrac -host <host> racadm getsysinfo`
+3. `idrac -host <host> info`, `sensors`, `sel`
+4. `idrac -host <host> kvm screenshot shot.png`
+5. `idrac -host <host> kvm` and test keyboard and mouse
 
 Every assumption that could not be checked is listed under "unverified" in
 `docs/kvm-control-channel.md` and `docs/kvm-video-channel.md`. iDRACs lock
