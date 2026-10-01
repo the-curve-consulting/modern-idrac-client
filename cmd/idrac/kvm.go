@@ -9,87 +9,111 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"idrac/pkg/kvm"
+	"idrac/pkg/viewer"
 	"idrac/pkg/webapi"
 )
 
 func init() {
 	register(&command{
-		name:  "kvm",
-		usage: "kvm [-via-web] [-record f.rec] probe | screenshot <file.png> | key <name>... | type <text> | mouse <x> <y> [click|right] | ctrl-alt-del | vnc [-listen :5901] [-vnc-password p] | replay <f.rec> [out.png]",
-		help:  "remote console (Avocent protocol, no Java): screenshots, input, VNC bridge",
-		run:   cmdKVM,
+		name:   "kvm",
+		usage:  "kvm [flags] [view | screenshot <file.png> | key <name>... | type <text> | mouse <x> <y> [click|right|middle|double] | ctrl-alt-del | vnc | probe | replay <f.rec> [out.png] | demo]",
+		help:   "remote console, no Java: viewer window (default), screenshots, scripted input, VNC bridge",
+		run:    cmdKVM,
+		noHost: true, // replay and demo need none; the other verbs resolve it themselves
 	})
 }
 
 type kvmOpts struct {
-	viaWeb   bool
-	direct   bool
-	wait     time.Duration
-	noAPCP   bool
-	shared   bool
-	viewOnly bool
-	record   string
+	viaWeb      bool
+	direct      bool
+	noAPCP      bool
+	shared      bool
+	viewOnly    bool
+	record      string
+	wait        time.Duration
+	listen      string
+	vncPassword string
+	speed       float64
+	exitAfter   time.Duration
 }
 
+const kvmVerbs = `verbs:
+  view                  open the console window (default; needs the viewer build)
+  screenshot <file.png> save the current screen
+  key <name>...         press keys: F2, Return, Escape, ctrl+alt+F2, a
+  type <text>           type text (\n = Enter; use -- before text starting with -)
+  mouse <x> <y> [click|right|middle|double]
+  ctrl-alt-del
+  vnc                   serve the console to any VNC viewer (-listen, -vnc-password)
+  probe                 transport handshake only: no login, no credentials
+  replay <f.rec> [out.png]  play a recording in the window, or decode it to a PNG
+  demo                  viewer test pattern, no iDRAC needed
+`
+
 func cmdKVM(ctx context.Context, g *globals, args []string) error {
-	fs := subflags("kvm", "kvm [flags] screenshot|key|type|mouse|ctrl-alt-del|vnc|watch ...")
+	fs := subflags("kvm", "kvm [flags] [verb] [args]   (flags may also follow the verb)")
 	o := kvmOpts{}
-	fs.BoolVar(&o.viaWeb, "via-web", false, "log in to the web UI and use the one-time console credentials from viewer.jnlp (what the browser does)")
-	fs.BoolVar(&o.direct, "direct", false, "always use the configured username/password on port 5900 (default: direct first, web fallback on login failure)")
-	fs.DurationVar(&o.wait, "wait", 6*time.Second, "how long to let the video settle before a screenshot")
+	fs.BoolVar(&o.viaWeb, "via-web", false, "use the web UI's one-time console credentials (what the browser does)")
+	fs.BoolVar(&o.direct, "direct", false, "only try the configured account on port 5900 (default: direct, then web fallback)")
 	fs.BoolVar(&o.noAPCP, "no-apcp", false, "skip the APCP pre-handshake (direct TLS)")
 	fs.BoolVar(&o.shared, "shared", false, "request a shared session if the console is in use")
-	fs.BoolVar(&o.viewOnly, "view-only", false, "VNC bridge: do not forward keyboard/mouse")
-	fs.StringVar(&o.record, "record", "", "write the raw video stream to this file (replay with `kvm replay` or `viewer -replay`)")
-	// allow flags after the verb too
-	var verbArgs, flagArgs []string
-	for i := 0; i < len(args); i++ {
-		a := args[i]
-		if strings.HasPrefix(a, "-") && len(verbArgs) == 0 {
-			flagArgs = append(flagArgs, a)
-			if !strings.Contains(a, "=") && i+1 < len(args) && isValueFlag(a) {
-				flagArgs = append(flagArgs, args[i+1])
-				i++
-			}
-			continue
-		}
-		verbArgs = append(verbArgs, a)
+	fs.BoolVar(&o.viewOnly, "view-only", false, "view, vnc: do not forward keyboard/mouse")
+	fs.StringVar(&o.record, "record", "", "also write the raw video stream to `file` (play it back with: kvm replay file)")
+	fs.DurationVar(&o.wait, "wait", 6*time.Second, "screenshot: how long to let the video settle")
+	fs.StringVar(&o.listen, "listen", "127.0.0.1:5901", "vnc: address for VNC viewers to connect to")
+	fs.StringVar(&o.vncPassword, "vnc-password", os.Getenv("IDRAC_VNC_PASSWORD"), "vnc: require this password from viewers ($IDRAC_VNC_PASSWORD)")
+	fs.Float64Var(&o.speed, "speed", 1, "replay: playback speed in the window")
+	fs.DurationVar(&o.exitAfter, "exit-after", 0, "view, replay, demo: close the window after this long (smoke tests)")
+	usage := fs.Usage
+	fs.Usage = func() {
+		usage()
+		fmt.Fprint(os.Stderr, kvmVerbs)
 	}
-	if err := fs.Parse(flagArgs); err != nil {
+	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	if len(verbArgs) == 0 {
-		fs.Usage()
-		return errors.New("kvm: missing verb")
+	verb := "view"
+	rest := fs.Args()
+	if len(rest) > 0 {
+		verb = rest[0]
+		// Accept flags after the verb as well: `kvm view -view-only`.
+		if err := fs.Parse(rest[1:]); err != nil {
+			return err
+		}
+		rest = fs.Args()
 	}
-	verb, rest := verbArgs[0], verbArgs[1:]
 	switch verb {
-	case "screenshot", "shot":
+	case "replay":
+		return kvmReplay(ctx, g, o, rest)
+	case "demo":
+		return kvmDemo(g, o)
+	}
+	if err := g.resolveTarget(); err != nil {
+		return err
+	}
+	switch verb {
+	case "view":
+		return kvmView(ctx, g, o)
+	case "screenshot":
 		return kvmScreenshot(ctx, g, o, rest)
-	case "key", "keys":
+	case "key":
 		return kvmKeys(ctx, g, o, rest)
 	case "type":
 		return kvmType(ctx, g, o, strings.Join(rest, " "))
 	case "mouse":
 		return kvmMouse(ctx, g, o, rest)
-	case "ctrl-alt-del", "cad":
+	case "ctrl-alt-del":
 		return kvmKeys(ctx, g, o, []string{"ctrl-alt-del"})
 	case "vnc":
-		return kvmVNC(ctx, g, o, rest)
+		return kvmVNC(ctx, g, o)
 	case "probe":
 		return kvmProbe(ctx, g, o)
-	case "replay":
-		return kvmReplay(ctx, g, rest)
-	case "creds":
-		l, err := kvmWebCredentials(ctx, g)
-		if err != nil {
-			return err
-		}
-		return g.printJSON(map[string]any{"host": l.Host, "kmport": l.KMPort, "vport": l.VPort, "user": l.User, "passwd": "<redacted>", "args": redact(l.Args)})
 	}
+	fs.Usage()
 	return fmt.Errorf("kvm: unknown verb %q", verb)
 }
 
@@ -113,25 +137,6 @@ func kvmProbe(ctx context.Context, g *globals, o kvmOpts) error {
 		res[name] = m
 	}
 	return g.printJSON(res)
-}
-
-func isValueFlag(a string) bool {
-	switch strings.TrimLeft(a, "-") {
-	case "wait", "listen", "vnc-password", "record":
-		return true
-	}
-	return false
-}
-
-func redact(m map[string]string) map[string]string {
-	out := map[string]string{}
-	for k, v := range m {
-		if k == "passwd" || k == "password" {
-			v = "<redacted>"
-		}
-		out[k] = v
-	}
-	return out
 }
 
 // kvmWebCredentials performs the browser's launch sequence: web login, then
@@ -190,25 +195,52 @@ func (g *globals) kvmConfig(ctx context.Context, o kvmOpts) (kvm.Config, error) 
 // -direct nor -via-web it tries the real account first (works on iDRAC6) and,
 // if the console rejects the login, falls back to the web-UI launch tokens.
 func openConsole(ctx context.Context, g *globals, o kvmOpts) (*kvm.Console, error) {
-	var rec *kvm.Recorder
-	if o.record != "" {
-		f, err := os.Create(o.record)
-		if err != nil {
-			return nil, err
-		}
-		// The file stays open for the life of the process; the OS closes it.
-		if rec, err = kvm.NewRecorder(f); err != nil {
-			return nil, err
-		}
+	rec, err := recorderFor(o.record)
+	if err != nil {
+		return nil, err
 	}
 	return openConsoleRec(ctx, g, o, rec)
 }
 
-// kvmReplay decodes a recording offline and writes the final frame, printing
-// decoder statistics: the tool for chasing video artefacts without an iDRAC.
-func kvmReplay(ctx context.Context, g *globals, args []string) error {
-	if len(args) < 1 {
+var (
+	recorderMu sync.Mutex
+	recorders  = map[string]*kvm.Recorder{}
+)
+
+// recorderFor returns the process-wide recorder for path ("" = none). It is
+// shared across reconnects so a dropped session does not truncate the file.
+func recorderFor(path string) (*kvm.Recorder, error) {
+	if path == "" {
+		return nil, nil
+	}
+	recorderMu.Lock()
+	defer recorderMu.Unlock()
+	if r, ok := recorders[path]; ok {
+		return r, nil
+	}
+	f, err := os.Create(path) // stays open for the life of the process
+	if err != nil {
+		return nil, err
+	}
+	r, err := kvm.NewRecorder(f)
+	if err != nil {
+		f.Close()
+		return nil, err
+	}
+	recorders[path] = r
+	return r, nil
+}
+
+// kvmReplay plays a recording: in the viewer window when no output file is
+// given and the viewer is compiled in, otherwise headless, writing the final
+// frame and printing decoder statistics (for chasing video artefacts without
+// an iDRAC).
+func kvmReplay(ctx context.Context, g *globals, o kvmOpts, args []string) error {
+	if len(args) < 1 || len(args) > 2 {
 		return errors.New("usage: kvm replay <file.rec> [out.png]")
+	}
+	if len(args) == 1 && viewer.Available {
+		return kvmReplayWindow(g, o, args[0])
 	}
 	f, err := os.Open(args[0])
 	if err != nil {
@@ -396,13 +428,7 @@ func kvmMouse(ctx context.Context, g *globals, o kvmOpts, args []string) error {
 	return nil
 }
 
-func kvmVNC(ctx context.Context, g *globals, o kvmOpts, args []string) error {
-	fs := subflags("kvm vnc", "kvm vnc [-listen :5901] [-vnc-password <pw>]")
-	listen := fs.String("listen", "127.0.0.1:5901", "address for VNC viewers to connect to")
-	vncPass := fs.String("vnc-password", os.Getenv("IDRAC_VNC_PASSWORD"), "require VNC authentication with this password ($IDRAC_VNC_PASSWORD)")
-	if err := fs.Parse(args); err != nil {
-		return err
-	}
+func kvmVNC(ctx context.Context, g *globals, o kvmOpts) error {
 	c, err := openConsole(ctx, g, o)
 	if err != nil {
 		return err
@@ -411,7 +437,7 @@ func kvmVNC(ctx context.Context, g *globals, o kvmOpts, args []string) error {
 	if err := c.WaitRunning(ctx); err != nil {
 		return err
 	}
-	srv := &kvm.VNCServer{FB: c.FB, Input: c.Session, Password: *vncPass, Name: "iDRAC " + g.target.Name, Logger: g.logger, ViewOnly: o.viewOnly}
+	srv := &kvm.VNCServer{FB: c.FB, Input: c.Session, Password: o.vncPassword, Name: "iDRAC " + g.target.Name, Logger: g.logger, ViewOnly: o.viewOnly}
 	srv.OnClientChange = func(n int) {
 		if n > 0 {
 			c.Session.MouseOrigin()
@@ -420,14 +446,14 @@ func kvmVNC(ctx context.Context, g *globals, o kvmOpts, args []string) error {
 			c.Session.ReleaseAllKeys()
 		}
 	}
-	fmt.Fprintf(os.Stderr, "console up; connect a VNC viewer to %s (Ctrl-C to stop)\n", *listen)
+	fmt.Fprintf(os.Stderr, "console up; connect a VNC viewer to %s (Ctrl-C to stop)\n", o.listen)
 	vctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	go func() {
 		<-c.Done()
 		cancel()
 	}()
-	err = srv.ListenAndServe(vctx, *listen)
+	err = srv.ListenAndServe(vctx, o.listen)
 	if cerr := c.Err(); cerr != nil {
 		return cerr
 	}

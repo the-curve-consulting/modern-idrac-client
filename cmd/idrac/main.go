@@ -6,6 +6,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -99,34 +100,44 @@ func main() {
 	installPasswordPrompt()
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	if cmd.name == "kvm" && len(args) > 1 && args[1] == "replay" {
-		cmd = &command{name: "kvm", noHost: true, run: cmd.run}
-	}
 	if !cmd.noHost {
-		if g.host == "" {
-			fatal(fmt.Errorf("no host given: use -host <name|address> (configured: %s)", strings.Join(g.cfg.Names(), ", ")))
+		if err := g.resolveTarget(); err != nil {
+			fatal(err)
 		}
-		g.target = g.cfg.Resolve(g.host)
-		if g.user != "" {
-			g.target.Username = g.user
-		}
-		if g.password != "" {
-			g.target.Password = g.password
-		}
-		if g.gen != "" {
-			g.target.Generation = config.Generation(g.gen)
-		}
-		ins := g.insecure
-		g.target.Insecure = &ins
 	}
 	if err := cmd.run(ctx, g, args[1:]); err != nil {
 		fatal(err)
 	}
 }
 
-func configGeneration(s string) config.Generation { return config.Generation(s) }
+// resolveTarget turns -host into g.target, applying the command-line
+// overrides. Commands that only sometimes need a host call it themselves.
+func (g *globals) resolveTarget() error {
+	if g.host == "" {
+		if names := g.cfg.Names(); len(names) > 0 {
+			return fmt.Errorf("no host given: use -host <name|address> (configured: %s)", strings.Join(names, ", "))
+		}
+		return errors.New("no host given: use -host <address>, e.g. idrac -host 192.168.11.221 kvm")
+	}
+	g.target = g.cfg.Resolve(g.host)
+	if g.user != "" {
+		g.target.Username = g.user
+	}
+	if g.password != "" {
+		g.target.Password = g.password
+	}
+	if g.gen != "" {
+		g.target.Generation = config.Generation(g.gen)
+	}
+	ins := g.insecure
+	g.target.Insecure = &ins
+	return nil
+}
 
 func fatal(err error) {
+	if errors.Is(err, flag.ErrHelp) {
+		os.Exit(0) // usage was already printed
+	}
 	fmt.Fprintln(os.Stderr, "idrac:", err)
 	os.Exit(1)
 }
@@ -161,7 +172,8 @@ Quick start (no credentials needed):
 Then, with IDRAC_PASSWORD set (or a hosts file at %s):
   idrac -host 192.168.11.221 racadm getsysinfo
   idrac -host 192.168.11.221 info
-  idrac -host 192.168.11.221 -v -trace kvm screenshot shot.png
+  idrac -host 192.168.11.221 kvm                      # console window
+  idrac -host 192.168.11.221 kvm screenshot shot.png
 `, config.DefaultPath())
 }
 

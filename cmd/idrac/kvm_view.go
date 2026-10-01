@@ -15,106 +15,60 @@ import (
 	"idrac/pkg/viewer"
 )
 
-func init() {
-	register(&command{
-		name:  "viewer",
-		usage: "viewer [-view-only] [-via-web] [-record file.rec] | viewer -replay file.rec | viewer -demo",
-		help:  "graphical console window: live video, keyboard/mouse, macros, power, next boot, screenshots",
-		run:   cmdViewer,
-		// -demo and -replay need no host; checked in the command itself.
-		noHost: true,
-	})
-}
-
-func cmdViewer(ctx context.Context, g *globals, args []string) error {
-	fs := subflags("viewer", "viewer [flags]")
-	o := kvmOpts{}
-	fs.BoolVar(&o.viaWeb, "via-web", false, "use the web UI's one-time console credentials")
-	fs.BoolVar(&o.direct, "direct", false, "only try the configured account on port 5900")
-	fs.BoolVar(&o.noAPCP, "no-apcp", false, "skip the APCP pre-handshake")
-	fs.BoolVar(&o.shared, "shared", false, "request a shared session if the console is in use")
-	fs.BoolVar(&o.viewOnly, "view-only", false, "start without forwarding keyboard/mouse")
-	record := fs.String("record", "", "also write the raw video stream to this file (for `viewer -replay` and decoder debugging)")
-	replay := fs.String("replay", "", "play back a recording instead of connecting")
-	speed := fs.Float64("speed", 1, "replay speed (0 = as fast as possible)")
-	demo := fs.Bool("demo", false, "show a synthetic test screen instead of connecting (no iDRAC needed)")
-	exitAfter := fs.Duration("exit-after", 0, "close the window after this long (testing)")
-	if err := fs.Parse(args); err != nil {
-		return err
-	}
-	vo := viewer.Options{ViewOnly: o.viewOnly, Logger: g.logger, ExitAfter: *exitAfter}
-
-	switch {
-	case *demo:
-		vo.Title = "demo"
-		vo.Connect = func(ctx context.Context) (viewer.Backend, error) { return newDemoBackend(), nil }
-	case *replay != "":
-		vo.Title = "replay " + *replay
-		path, sp := *replay, *speed
-		vo.Connect = func(ctx context.Context) (viewer.Backend, error) { return newReplayBackend(path, sp, g) }
-	default:
-		if g.host == "" {
-			return fmt.Errorf("no host given: use -host <name|address> (configured: %s)", strings.Join(g.cfg.Names(), ", "))
-		}
-		g.target = g.cfg.Resolve(g.host)
-		if g.user != "" {
-			g.target.Username = g.user
-		}
-		if g.password != "" {
-			g.target.Password = g.password
-		}
-		if g.gen != "" {
-			g.target.Generation = configGeneration(g.gen)
-		}
-		ins := g.insecure
-		g.target.Insecure = &ins
-		// Ask for the password on the terminal before the window opens.
+// kvmView opens the console window on the target.
+func kvmView(ctx context.Context, g *globals, o kvmOpts) error {
+	// Ask for the password on the terminal before the window opens.
+	if viewer.Available {
 		if _, err := g.passwd(ctx); err != nil {
 			return err
 		}
-		vo.Title = g.target.Name
-		if g.target.Name != g.target.Address {
-			vo.Title = fmt.Sprintf("%s (%s)", g.target.Name, g.target.Address)
-		}
-		recPath := *record
-		vo.Connect = func(ctx context.Context) (viewer.Backend, error) { return connectBackend(ctx, g, o, recPath) }
-		vo.Actions = viewerActions(g)
 	}
-	return viewer.Run(vo)
+	title := g.target.Name
+	if g.target.Name != g.target.Address {
+		title = fmt.Sprintf("%s (%s)", g.target.Name, g.target.Address)
+	}
+	return viewer.Run(viewer.Options{
+		Title:     title,
+		ViewOnly:  o.viewOnly,
+		Logger:    g.logger,
+		ExitAfter: o.exitAfter,
+		Actions:   viewerActions(g),
+		Connect:   func(ctx context.Context) (viewer.Backend, error) { return connectBackend(ctx, g, o) },
+	})
+}
+
+// kvmDemo opens the window on a synthetic test screen.
+func kvmDemo(g *globals, o kvmOpts) error {
+	return viewer.Run(viewer.Options{
+		Title: "demo", Logger: g.logger, ExitAfter: o.exitAfter,
+		Connect: func(ctx context.Context) (viewer.Backend, error) { return newDemoBackend(), nil },
+	})
+}
+
+// kvmReplayWindow plays a recording in the window, looping.
+func kvmReplayWindow(g *globals, o kvmOpts, path string) error {
+	return viewer.Run(viewer.Options{
+		Title: "replay " + path, Logger: g.logger, ExitAfter: o.exitAfter,
+		Connect: func(ctx context.Context) (viewer.Backend, error) { return newReplayBackend(path, o.speed, g) },
+	})
 }
 
 // ---- live backend ----
 
 type consoleBackend struct {
 	c       *kvm.Console
-	recFile *os.File
+	record  string
 	started time.Time
 }
 
-func connectBackend(ctx context.Context, g *globals, o kvmOpts, recPath string) (viewer.Backend, error) {
-	b := &consoleBackend{started: time.Now()}
-	var rec *kvm.Recorder
-	if recPath != "" {
-		f, err := os.Create(recPath)
-		if err != nil {
-			return nil, err
-		}
-		if rec, err = kvm.NewRecorder(f); err != nil {
-			f.Close()
-			return nil, err
-		}
-		b.recFile = f
-	}
+func connectBackend(ctx context.Context, g *globals, o kvmOpts) (viewer.Backend, error) {
 	cctx, cancel := context.WithTimeout(ctx, 60*time.Second)
 	defer cancel()
-	c, err := openConsoleRec(cctx, g, o, rec)
+	c, err := openConsole(cctx, g, o)
 	if err != nil {
-		if b.recFile != nil {
-			b.recFile.Close()
-		}
 		return nil, err
 	}
-	b.c = c
+	b := &consoleBackend{c: c, record: o.record, started: time.Now()}
 	if err := c.WaitRunning(cctx); err != nil {
 		b.Close()
 		return nil, err
@@ -145,14 +99,7 @@ func (b *consoleBackend) Refresh() error {
 	}
 	return b.c.Video.RequestRefresh()
 }
-func (b *consoleBackend) Close() error {
-	err := b.c.Close()
-	if b.recFile != nil {
-		b.recFile.Close()
-		b.recFile = nil
-	}
-	return err
-}
+func (b *consoleBackend) Close() error { return b.c.Close() }
 
 func (b *consoleBackend) Stats() string {
 	var sb strings.Builder
@@ -183,8 +130,8 @@ func (b *consoleBackend) Stats() string {
 			fmt.Fprintf(&sb, "Text mode:        %d packets\n", st.TextPackets)
 		}
 	}
-	if b.recFile != nil {
-		fmt.Fprintf(&sb, "Recording to:     %s\n", b.recFile.Name())
+	if b.record != "" {
+		fmt.Fprintf(&sb, "Recording to:     %s\n", b.record)
 	}
 	return sb.String()
 }

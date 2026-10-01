@@ -17,7 +17,7 @@ injection, and a VNC bridge so any VNC viewer becomes the console.
 ```sh
 ./build.sh          # vet + test + build bin/idrac for this machine
 ./build.sh all      # also linux/arm64, darwin/arm64, windows/amd64 into bin/
-./run.sh <args>     # build if sources changed, then run: ./run.sh -host r710 info
+./run.sh <args>     # build if sources changed, then run: ./run.sh -host r710 kvm
 go build -o idrac ./cmd/idrac   # plain go build works too
 ```
 
@@ -52,26 +52,29 @@ idrac -host pmx-a jobs | vmedia | accounts | bios | attrs | scp export | update 
 idrac -host r710 web get sysDesc,pwState   # raw legacy /data?get= call
 idrac -host r710 web set pwState=1         # raw legacy /data?set= call
 idrac -host r710 web jnlp                  # the console JNLP the browser would get
-idrac -host r710 kvm probe                 # APCP + TLS handshake only, no login
-idrac -host r710 kvm screenshot out.png
-idrac -host r710 kvm key F1                # key names: F1..F24, Return, Escape, ctrl+alt+F2, ctrl-alt-del, a
-idrac -host r710 kvm type "root\n"         # type text (\n = Enter)
-idrac -host r710 kvm mouse 640 400 click
-idrac -host r710 kvm vnc -listen :5901     # expose the console to any VNC viewer
 ```
 
-### Graphical viewer
+### Remote console: `kvm`
+
+One command covers the console. With no verb it opens the viewer window.
 
 ```
-idrac -host 192.168.11.221 viewer            # native console window
-idrac -host 192.168.11.221 viewer -view-only
-idrac -host 192.168.11.221 viewer -record session.rec   # also save the raw video stream
-idrac viewer -replay session.rec             # play a recording back, no iDRAC needed
-idrac viewer -demo                           # test pattern, checks rendering and input locally
-idrac kvm replay session.rec out.png         # decode a recording headless, print decoder stats
+idrac -host 192.168.11.221 kvm                        # console window (same as: kvm view)
+idrac -host 192.168.11.221 kvm view -view-only
+idrac -host 192.168.11.221 kvm -record session.rec    # window, also saving the raw video stream
+idrac -host 192.168.11.221 kvm screenshot out.png
+idrac -host 192.168.11.221 kvm key F2                 # F1..F24, Return, Escape, ctrl+alt+F2, a
+idrac -host 192.168.11.221 kvm type "root\n"          # \n = Enter
+idrac -host 192.168.11.221 kvm mouse 640 400 click
+idrac -host 192.168.11.221 kvm ctrl-alt-del
+idrac -host 192.168.11.221 kvm vnc                    # serve the console to any VNC viewer on 127.0.0.1:5901
+idrac -host 192.168.11.221 kvm probe                  # APCP + TLS handshake only, no login
+idrac kvm replay session.rec                          # play a recording in the window
+idrac kvm replay session.rec out.png                  # decode it headless, print decoder stats
+idrac kvm demo                                        # test pattern: checks rendering and input locally
 ```
 
-The viewer is the Java client's replacement: live video scaled to the window
+The window is the Java client's replacement: live video scaled to the window
 (or 1:1 / full screen), keyboard sent as physical keys so the server applies
 its own layout, absolute mouse, and menus for
 
@@ -85,10 +88,11 @@ its own layout, absolute mouse, and menus for
 The status bar shows connection state, resolution, frame rate and host power
 state. If the session drops, it offers to reconnect.
 
-It needs cgo and OpenGL/X11 headers at build time (`-tags gui`); `./run.sh` and
-`./build.sh` enable it automatically and fall back to a viewer-less binary if
-the toolchain is missing. The cross-compiled binaries from `./build.sh all`
-have no viewer.
+The window needs cgo and OpenGL/X11 headers at build time (`-tags gui`);
+`./run.sh` and `./build.sh` enable it automatically and fall back to a
+window-less binary if the toolchain is missing. The cross-compiled binaries
+from `./build.sh all` have no window; use `kvm vnc` there, which is also the way
+to reach a console from a machine with no display.
 
 `kvm` logs in to port 5900 with the configured account first (that is what the
 iDRAC6 JNLP does) and, if the console refuses it, repeats the browser's launch
