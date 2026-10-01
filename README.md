@@ -21,7 +21,7 @@ injection, and a VNC bridge so any VNC viewer becomes the console.
 go build -o idrac ./cmd/idrac   # plain go build works too
 ```
 
-Go 1.27+, two dependencies (`golang.org/x/crypto` for SSH, `golang.org/x/term`).
+Go 1.27+. The CLI depends only on `golang.org/x/crypto` (SSH) and `golang.org/x/term`; the viewer adds Fyne.
 
 ## Configure hosts
 
@@ -60,6 +60,36 @@ idrac -host r710 kvm mouse 640 400 click
 idrac -host r710 kvm vnc -listen :5901     # expose the console to any VNC viewer
 ```
 
+### Graphical viewer
+
+```
+idrac -host 192.168.11.221 viewer            # native console window
+idrac -host 192.168.11.221 viewer -view-only
+idrac -host 192.168.11.221 viewer -record session.rec   # also save the raw video stream
+idrac viewer -replay session.rec             # play a recording back, no iDRAC needed
+idrac viewer -demo                           # test pattern, checks rendering and input locally
+idrac kvm replay session.rec out.png         # decode a recording headless, print decoder stats
+```
+
+The viewer is the Java client's replacement: live video scaled to the window
+(or 1:1 / full screen), keyboard sent as physical keys so the server applies
+its own layout, absolute mouse, and menus for
+
+- **Macros**: Ctrl+Alt+Del, Alt+Tab, Alt+F4, SysRq, Super, Alt+F1..F12, Ctrl+Alt+F1..F12 and the other combos your window manager would swallow
+- **Power**: on, graceful shutdown, forced off, reset, power cycle, NMI (each asks first)
+- **Next Boot**: normal, PXE, BIOS setup, CD/DVD, hard disk
+- **File**: save screenshot, paste the clipboard as keystrokes, reconnect
+- **View**: refresh, actual size, full screen, smooth scaling, view only
+- **Tools**: session statistics, identify LED
+
+The status bar shows connection state, resolution, frame rate and host power
+state. If the session drops, it offers to reconnect.
+
+It needs cgo and OpenGL/X11 headers at build time (`-tags gui`); `./run.sh` and
+`./build.sh` enable it automatically and fall back to a viewer-less binary if
+the toolchain is missing. The cross-compiled binaries from `./build.sh all`
+have no viewer.
+
 `kvm` logs in to port 5900 with the configured account first (that is what the
 iDRAC6 JNLP does) and, if the console refuses it, repeats the browser's launch
 sequence: web login, fetch `viewer.jnlp`, use the one-time credentials inside.
@@ -74,9 +104,11 @@ Add `-v` for request logging, `-trace` to hex-dump console protocol packets,
 - `pkg/config` — hosts file + credential resolution
 - `pkg/redfish` — Redfish client with Dell OEM helpers
 - `pkg/racadm` — racadm over SSH
-- `pkg/idrac6` — legacy `/data` XML API (login, ST2 token, get/set, JNLP)
 - `pkg/kvm` — Avocent console protocol: APCP/TLS transport, control channel,
-  DVC video decoder, framebuffer, keyboard/mouse, RFB (VNC) server bridge
+  DVC and ASpeed video decoders, framebuffer, keyboard/mouse, record/replay,
+  RFB (VNC) server bridge
+- `pkg/viewer` — the graphical console window (Fyne, build tag `gui`)
+- `pkg/webapi` — legacy web-UI API shared by iDRAC6/7/8
 - `docs/` — byte-level protocol notes recovered from the Dell viewers
 
 ## Verification status

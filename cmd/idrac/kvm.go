@@ -18,7 +18,7 @@ import (
 func init() {
 	register(&command{
 		name:  "kvm",
-		usage: "kvm [-via-web] probe | screenshot <file.png> | key <name>... | type <text> | mouse <x> <y> [click|right] | ctrl-alt-del | vnc [-listen :5901] [-vnc-password p]",
+		usage: "kvm [-via-web] [-record f.rec] probe | screenshot <file.png> | key <name>... | type <text> | mouse <x> <y> [click|right] | ctrl-alt-del | vnc [-listen :5901] [-vnc-password p] | replay <f.rec> [out.png]",
 		help:  "remote console (Avocent protocol, no Java): screenshots, input, VNC bridge",
 		run:   cmdKVM,
 	})
@@ -31,6 +31,7 @@ type kvmOpts struct {
 	noAPCP   bool
 	shared   bool
 	viewOnly bool
+	record   string
 }
 
 func cmdKVM(ctx context.Context, g *globals, args []string) error {
@@ -42,6 +43,7 @@ func cmdKVM(ctx context.Context, g *globals, args []string) error {
 	fs.BoolVar(&o.noAPCP, "no-apcp", false, "skip the APCP pre-handshake (direct TLS)")
 	fs.BoolVar(&o.shared, "shared", false, "request a shared session if the console is in use")
 	fs.BoolVar(&o.viewOnly, "view-only", false, "VNC bridge: do not forward keyboard/mouse")
+	fs.StringVar(&o.record, "record", "", "write the raw video stream to this file (replay with `kvm replay` or `viewer -replay`)")
 	// allow flags after the verb too
 	var verbArgs, flagArgs []string
 	for i := 0; i < len(args); i++ {
@@ -79,6 +81,8 @@ func cmdKVM(ctx context.Context, g *globals, args []string) error {
 		return kvmVNC(ctx, g, o, rest)
 	case "probe":
 		return kvmProbe(ctx, g, o)
+	case "replay":
+		return kvmReplay(ctx, g, rest)
 	case "creds":
 		l, err := kvmWebCredentials(ctx, g)
 		if err != nil {
@@ -113,7 +117,7 @@ func kvmProbe(ctx context.Context, g *globals, o kvmOpts) error {
 
 func isValueFlag(a string) bool {
 	switch strings.TrimLeft(a, "-") {
-	case "wait", "listen", "vnc-password":
+	case "wait", "listen", "vnc-password", "record":
 		return true
 	}
 	return false
@@ -186,10 +190,62 @@ func (g *globals) kvmConfig(ctx context.Context, o kvmOpts) (kvm.Config, error) 
 // -direct nor -via-web it tries the real account first (works on iDRAC6) and,
 // if the console rejects the login, falls back to the web-UI launch tokens.
 func openConsole(ctx context.Context, g *globals, o kvmOpts) (*kvm.Console, error) {
+	var rec *kvm.Recorder
+	if o.record != "" {
+		f, err := os.Create(o.record)
+		if err != nil {
+			return nil, err
+		}
+		// The file stays open for the life of the process; the OS closes it.
+		if rec, err = kvm.NewRecorder(f); err != nil {
+			return nil, err
+		}
+	}
+	return openConsoleRec(ctx, g, o, rec)
+}
+
+// kvmReplay decodes a recording offline and writes the final frame, printing
+// decoder statistics: the tool for chasing video artefacts without an iDRAC.
+func kvmReplay(ctx context.Context, g *globals, args []string) error {
+	if len(args) < 1 {
+		return errors.New("usage: kvm replay <file.rec> [out.png]")
+	}
+	f, err := os.Open(args[0])
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	fb := kvm.NewFramebuffer()
+	st, err := kvm.Replay(ctx, f, fb, g.logger, 0)
+	if st != nil {
+		w, h := fb.Size()
+		fmt.Fprintf(g.out, "%dx%d, %d frames, %d packets, %d decode errors, %d unknown, aspeed %d frames/%d errors, dvc %d frames/%d checksum errors\n",
+			w, h, fb.Frames(), st.Packets, st.DecodeErrors, st.Unknown, st.ASpeedFrames, st.ASpeedErrors, st.DVC.Frames, st.DVC.ChecksumErrors)
+	}
+	if err != nil {
+		return err
+	}
+	if len(args) > 1 {
+		out, err := os.Create(args[1])
+		if err != nil {
+			return err
+		}
+		defer out.Close()
+		if err := fb.WritePNG(out); err != nil {
+			return err
+		}
+		fmt.Fprintf(g.out, "wrote %s\n", args[1])
+	}
+	return nil
+}
+
+// openConsoleRec is openConsole with an optional video recorder attached.
+func openConsoleRec(ctx context.Context, g *globals, o kvmOpts, rec *kvm.Recorder) (*kvm.Console, error) {
 	cfg, err := g.kvmConfig(ctx, o)
 	if err != nil {
 		return nil, err
 	}
+	cfg.VideoRecorder = rec
 	c, err := kvm.OpenConsole(ctx, cfg)
 	var le *kvm.LoginError
 	if err != nil && !o.viaWeb && !o.direct && errors.As(err, &le) {
@@ -199,6 +255,7 @@ func openConsole(ctx context.Context, g *globals, o kvmOpts) (*kvm.Console, erro
 		if err2 != nil {
 			return nil, fmt.Errorf("%v; web fallback: %w", err, err2)
 		}
+		cfg.VideoRecorder = rec
 		c, err = kvm.OpenConsole(ctx, cfg)
 	}
 	if err != nil {

@@ -1,11 +1,13 @@
 #!/usr/bin/env bash
 # Build the idrac CLI (only when sources changed) and run it with the given args.
 #
-#   ./run.sh -host r710 info
-#   ./run.sh -host r710 kvm screenshot shot.png
-#   ./run.sh                      # prints usage
+#   ./run.sh -host 192.168.11.221 info
+#   ./run.sh -host 192.168.11.221 viewer      # graphical console
+#   ./run.sh viewer -demo                     # viewer test screen, no iDRAC needed
+#   ./run.sh                                  # prints usage
 #
-# Env: IDRAC_BUILD=1 forces a rebuild; GOFLAGS/CGO_ENABLED pass through to go.
+# Env: IDRAC_BUILD=1 forces a rebuild; IDRAC_NOGUI=1 builds without the viewer
+# (pure Go, no cgo/OpenGL needed).
 set -euo pipefail
 
 cd "$(dirname "${BASH_SOURCE[0]}")"
@@ -20,8 +22,13 @@ needs_build() {
 }
 
 if needs_build; then
-  echo "building $BIN ..." >&2
-  CGO_ENABLED="${CGO_ENABLED:-0}" go build -trimpath -ldflags='-s -w' -o "$BIN" ./cmd/idrac
+  if [[ "${IDRAC_NOGUI:-0}" != 1 ]] && CGO_ENABLED=1 go build -tags gui -trimpath -ldflags='-s -w' -o "$BIN" ./cmd/idrac 2>bin/.gui-build.log; then
+    echo "built $BIN (with viewer)" >&2
+  else
+    [[ "${IDRAC_NOGUI:-0}" != 1 ]] && echo "viewer build failed (see bin/.gui-build.log); building without it" >&2
+    CGO_ENABLED=0 go build -trimpath -ldflags='-s -w' -o "$BIN" ./cmd/idrac
+    echo "built $BIN (no viewer)" >&2
+  fi
 fi
 
 exec "$BIN" "$@"

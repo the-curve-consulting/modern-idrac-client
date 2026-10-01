@@ -53,7 +53,11 @@ func OpenConsole(ctx context.Context, cfg Config) (*Console, error) {
 			c.Close()
 			return nil, fmt.Errorf("video channel: %w", err)
 		}
-		c.Video = NewVideoStream(rw, c.FB, cfg.Logger)
+		var vrw io.ReadWriter = rw
+		if cfg.VideoRecorder != nil {
+			vrw = &recordingRW{ReadWriter: rw, rec: cfg.VideoRecorder}
+		}
+		c.Video = NewVideoStream(vrw, c.FB, cfg.Logger)
 		c.Video.SetTrace(cfg.TraceVideo)
 		c.Video.Control = c.Session
 		c.Video.OnConnectStatus = func(connected bool) {

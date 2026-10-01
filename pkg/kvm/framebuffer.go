@@ -201,3 +201,14 @@ func getRGB(pix []byte, i int) uint32 {
 	o := i * 4
 	return uint32(pix[o])<<16 | uint32(pix[o+1])<<8 | uint32(pix[o+2])
 }
+
+// Update lets code outside the decoders (demo sources, tests, overlays) draw
+// into the framebuffer. fn receives the live image under the write lock and
+// returns the rectangle it changed; subscribers are then notified and, when
+// frame is true, the frame counter advances.
+func (fb *Framebuffer) Update(frame bool, fn func(img *image.RGBA) image.Rectangle) {
+	fb.modify(fn)
+	if frame {
+		fb.endFrame()
+	}
+}

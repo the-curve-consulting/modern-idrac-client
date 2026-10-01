@@ -99,6 +99,9 @@ func main() {
 	installPasswordPrompt()
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	if cmd.name == "kvm" && len(args) > 1 && args[1] == "replay" {
+		cmd = &command{name: "kvm", noHost: true, run: cmd.run}
+	}
 	if !cmd.noHost {
 		if g.host == "" {
 			fatal(fmt.Errorf("no host given: use -host <name|address> (configured: %s)", strings.Join(g.cfg.Names(), ", ")))
@@ -120,6 +123,8 @@ func main() {
 		fatal(err)
 	}
 }
+
+func configGeneration(s string) config.Generation { return config.Generation(s) }
 
 func fatal(err error) {
 	fmt.Fprintln(os.Stderr, "idrac:", err)

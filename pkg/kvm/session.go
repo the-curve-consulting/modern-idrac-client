@@ -119,6 +119,9 @@ type Config struct {
 	// TraceVideo additionally hex-dumps traffic on the video socket returned
 	// by OpenVideo (reads are truncated to 64 bytes).
 	TraceVideo bool
+	// VideoRecorder, when set, receives a timestamped copy of everything read
+	// from the video socket (see record.go); used by Console.
+	VideoRecorder *Recorder
 }
 
 // PollMode selects GetAvailableServers polling (Config.PollServers).
