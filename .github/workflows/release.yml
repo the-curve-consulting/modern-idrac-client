@@ -31,10 +31,10 @@ jobs:
           - { os: macos-latest, goos: darwin, goarch: arm64, gui: true }
           - { os: windows-latest, goos: windows, goarch: amd64, gui: true }
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ env.TAG }}
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
 
@@ -83,7 +83,7 @@ jobs:
           if ls ../*.zip >/dev/null 2>&1; then 7z x ../*.zip >/dev/null; else tar xzf ../*.tar.gz; fi
           ./*/idrac* version
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: idrac-${{ matrix.goos }}-${{ matrix.goarch }}
           path: |
@@ -95,7 +95,7 @@ jobs:
     needs: build
     runs-on: ubuntu-22.04
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           path: dist
           merge-multiple: true
