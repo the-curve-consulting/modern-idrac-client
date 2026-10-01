@@ -23,11 +23,11 @@ import (
 	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
 
-	"idrac/pkg/config"
-	"idrac/pkg/kvm"
-	"idrac/pkg/redfish"
-	"idrac/pkg/viewer"
-	"idrac/pkg/webapi"
+	"github.com/the-curve-consulting/modern-idrac-client/pkg/config"
+	"github.com/the-curve-consulting/modern-idrac-client/pkg/kvm"
+	"github.com/the-curve-consulting/modern-idrac-client/pkg/redfish"
+	"github.com/the-curve-consulting/modern-idrac-client/pkg/viewer"
+	"github.com/the-curve-consulting/modern-idrac-client/pkg/webapi"
 )
 
 // The manager is the graphical front end to everything the CLI does: a list
@@ -145,7 +145,7 @@ func newManager(g *globals, a fyne.App) *manager {
 			}),
 		),
 		fyne.NewMenu("Help", fyne.NewMenuItem("About", func() {
-			dialog.ShowInformation("iDRAC Manager", fmt.Sprintf("idrac %s\n\nHosts file: %s\nEvery tab runs the same code as the command line.", version, m.g.cfg.Path()), m.win)
+			dialog.ShowInformation("iDRAC Manager", fmt.Sprintf("idrac %s\n\nHosts file: %s\nEvery tab runs the same code as the command line.", buildVersion(), m.g.cfg.Path()), m.win)
 		})),
 	))
 

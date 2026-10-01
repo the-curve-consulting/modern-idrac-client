@@ -1,4 +1,4 @@
-module idrac
+module github.com/the-curve-consulting/modern-idrac-client
 
 go 1.27
 

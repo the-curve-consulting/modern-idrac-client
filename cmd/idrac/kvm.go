@@ -12,9 +12,9 @@ import (
 	"sync"
 	"time"
 
-	"idrac/pkg/kvm"
-	"idrac/pkg/viewer"
-	"idrac/pkg/webapi"
+	"github.com/the-curve-consulting/modern-idrac-client/pkg/kvm"
+	"github.com/the-curve-consulting/modern-idrac-client/pkg/viewer"
+	"github.com/the-curve-consulting/modern-idrac-client/pkg/webapi"
 )
 
 func init() {

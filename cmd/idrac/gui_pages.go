@@ -15,7 +15,7 @@ import (
 	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
 
-	"idrac/pkg/config"
+	"github.com/the-curve-consulting/modern-idrac-client/pkg/config"
 )
 
 // page is one tab of the host view: its content and how to (re)load it.

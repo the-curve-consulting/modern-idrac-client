@@ -7,7 +7,7 @@ import (
 	"sort"
 	"strings"
 
-	"idrac/pkg/webapi"
+	"github.com/the-curve-consulting/modern-idrac-client/pkg/webapi"
 )
 
 func init() {

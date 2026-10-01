@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"sync"
 
-	"idrac/pkg/redfish"
+	"github.com/the-curve-consulting/modern-idrac-client/pkg/redfish"
 )
 
 // demoDevice is a canned, in-memory iDRAC used by tests and by hosts with

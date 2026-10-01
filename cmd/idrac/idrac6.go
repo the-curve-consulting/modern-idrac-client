@@ -6,8 +6,8 @@ import (
 	"strconv"
 	"strings"
 
-	"idrac/pkg/redfish"
-	"idrac/pkg/webapi"
+	"github.com/the-curve-consulting/modern-idrac-client/pkg/redfish"
+	"github.com/the-curve-consulting/modern-idrac-client/pkg/webapi"
 )
 
 // idrac6Device implements Device on top of the legacy /data XML API, the

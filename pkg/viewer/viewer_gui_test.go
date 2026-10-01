@@ -13,7 +13,7 @@ import (
 	"fyne.io/fyne/v2/driver/desktop"
 	"fyne.io/fyne/v2/test"
 
-	"idrac/pkg/kvm"
+	"github.com/the-curve-consulting/modern-idrac-client/pkg/kvm"
 )
 
 type fakeBackend struct {

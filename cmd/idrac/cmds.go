@@ -10,8 +10,8 @@ import (
 	"strings"
 	"time"
 
-	"idrac/pkg/racadm"
-	"idrac/pkg/redfish"
+	"github.com/the-curve-consulting/modern-idrac-client/pkg/racadm"
+	"github.com/the-curve-consulting/modern-idrac-client/pkg/redfish"
 )
 
 func init() {

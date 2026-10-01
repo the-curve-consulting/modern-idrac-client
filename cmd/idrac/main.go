@@ -20,9 +20,9 @@ import (
 	"text/tabwriter"
 	"time"
 
-	"idrac/pkg/config"
-	"idrac/pkg/redfish"
-	"idrac/pkg/viewer"
+	"github.com/the-curve-consulting/modern-idrac-client/pkg/config"
+	"github.com/the-curve-consulting/modern-idrac-client/pkg/redfish"
+	"github.com/the-curve-consulting/modern-idrac-client/pkg/viewer"
 )
 
 // globals holds the flags shared by every subcommand.

@@ -11,7 +11,7 @@ import (
 	"context"
 	"time"
 
-	"idrac/pkg/kvm"
+	"github.com/the-curve-consulting/modern-idrac-client/pkg/kvm"
 )
 
 // Backend is a live console session as the viewer sees it.

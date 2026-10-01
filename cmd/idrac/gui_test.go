@@ -12,7 +12,7 @@ import (
 	"fyne.io/fyne/v2/test"
 	"fyne.io/fyne/v2/widget"
 
-	"idrac/pkg/config"
+	"github.com/the-curve-consulting/modern-idrac-client/pkg/config"
 )
 
 func testManager(t *testing.T) *manager {

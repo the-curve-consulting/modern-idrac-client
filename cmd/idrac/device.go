@@ -4,8 +4,8 @@ import (
 	"context"
 	"fmt"
 
-	"idrac/pkg/config"
-	"idrac/pkg/redfish"
+	"github.com/the-curve-consulting/modern-idrac-client/pkg/config"
+	"github.com/the-curve-consulting/modern-idrac-client/pkg/redfish"
 )
 
 // Device abstracts the management operations that exist on every generation,

@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"strings"
 
-	"idrac/pkg/config"
+	"github.com/the-curve-consulting/modern-idrac-client/pkg/config"
 )
 
 // capturedTable is one table a command produced.

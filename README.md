@@ -43,6 +43,9 @@ racadm tab, or `idrac -host <h> ssh` in a terminal.
 ## Build
 
 ```sh
+# install the latest release straight from source (needs Go, cgo and the GUI headers below)
+GOPRIVATE='github.com/the-curve-consulting/*' go install -tags gui github.com/the-curve-consulting/modern-idrac-client/cmd/idrac@latest
+
 ./build.sh          # vet + test + build bin/idrac for this machine
 ./build.sh all      # also linux/arm64, darwin/arm64, windows/amd64 into bin/
 ./run.sh <args>     # build if sources changed, then run: ./run.sh -host server01 kvm

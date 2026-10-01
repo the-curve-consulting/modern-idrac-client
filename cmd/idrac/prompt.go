@@ -7,7 +7,7 @@ import (
 
 	"golang.org/x/term"
 
-	"idrac/pkg/config"
+	"github.com/the-curve-consulting/modern-idrac-client/pkg/config"
 )
 
 // installPasswordPrompt makes the config package ask on the terminal when no

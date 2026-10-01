@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"idrac/pkg/config"
+	"github.com/the-curve-consulting/modern-idrac-client/pkg/config"
 )
 
 func demoGlobals(t *testing.T) (*globals, *config.Host) {
