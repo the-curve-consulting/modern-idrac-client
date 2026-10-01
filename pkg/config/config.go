@@ -30,6 +30,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -42,6 +43,7 @@ const (
 	GenIDRAC7 Generation = "idrac7" // Redfish + legacy API
 	GenIDRAC8 Generation = "idrac8"
 	GenIDRAC9 Generation = "idrac9"
+	GenDemo   Generation = "demo" // canned in-memory device, for trying the tool without hardware
 )
 
 // HasRedfish reports whether the generation exposes a Redfish service.
@@ -56,7 +58,7 @@ func (g Generation) HasRedfish() bool {
 // Host is one iDRAC entry after defaults have been applied.
 type Host struct {
 	Name        string     `json:"-"`
-	Address     string     `json:"address"`
+	Address     string     `json:"address,omitempty"`
 	Generation  Generation `json:"generation,omitempty"`
 	Username    string     `json:"username,omitempty"`
 	Password    string     `json:"password,omitempty"`
@@ -75,6 +77,7 @@ type File struct {
 	Defaults Host             `json:"defaults"`
 	Hosts    map[string]*Host `json:"hosts"`
 	path     string
+	mu       sync.RWMutex // guards Hosts and Defaults once the file is shared (GUI)
 }
 
 // DefaultPath returns the user-level config path.
@@ -116,7 +119,6 @@ func Load(path string) (*File, error) {
 			f.Hosts[name] = h
 		}
 		h.Name = name
-		applyDefaults(h, &f.Defaults)
 	}
 	return f, nil
 }
@@ -126,6 +128,8 @@ func (f *File) Path() string { return f.path }
 
 // Names returns host names sorted.
 func (f *File) Names() []string {
+	f.mu.RLock()
+	defer f.mu.RUnlock()
 	names := make([]string, 0, len(f.Hosts))
 	for n := range f.Hosts {
 		names = append(names, n)
@@ -134,20 +138,77 @@ func (f *File) Names() []string {
 	return names
 }
 
-// Resolve returns the host for a name or, when the name is not configured,
-// treats it as an address and builds an ad-hoc entry from defaults.
+// Resolve returns a copy of the host entry with defaults applied. When the
+// name is not configured it is matched against addresses, and failing that
+// treated as an address for an ad-hoc entry built from the defaults. The
+// entries in Hosts stay exactly as written in the file, so Save round-trips.
 func (f *File) Resolve(nameOrAddr string) *Host {
-	if h, ok := f.Hosts[nameOrAddr]; ok {
-		return h
-	}
-	for _, h := range f.Hosts {
-		if h.Address == nameOrAddr {
-			return h
+	f.mu.RLock()
+	defer f.mu.RUnlock()
+	var h Host
+	if e, ok := f.Hosts[nameOrAddr]; ok {
+		h = *e
+	} else {
+		found := false
+		for _, e := range f.Hosts {
+			if e.Address == nameOrAddr {
+				h, found = *e, true
+				break
+			}
+		}
+		if !found {
+			h = Host{Name: nameOrAddr, Address: nameOrAddr}
 		}
 	}
-	h := &Host{Name: nameOrAddr, Address: nameOrAddr}
-	applyDefaults(h, &f.Defaults)
-	return h
+	applyDefaults(&h, &f.Defaults)
+	return &h
+}
+
+// Set adds or replaces a host entry (as it should appear in the file).
+func (f *File) Set(name string, h Host) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	h.Name = name
+	f.Hosts[name] = &h
+}
+
+// Delete removes a host entry.
+func (f *File) Delete(name string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	delete(f.Hosts, name)
+}
+
+// Get returns the entry exactly as written in the file (no defaults applied).
+func (f *File) Get(name string) (Host, bool) {
+	f.mu.RLock()
+	defer f.mu.RUnlock()
+	if e, ok := f.Hosts[name]; ok {
+		return *e, true
+	}
+	return Host{}, false
+}
+
+// Save writes the file back to where it was loaded from (creating the
+// directory), readable only by the user since it may hold passwords.
+func (f *File) Save() error {
+	f.mu.RLock()
+	defer f.mu.RUnlock()
+	b, err := json.MarshalIndent(struct {
+		Defaults Host             `json:"defaults"`
+		Hosts    map[string]*Host `json:"hosts"`
+	}{f.Defaults, f.Hosts}, "", "  ")
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(f.path), 0o700); err != nil {
+		return err
+	}
+	tmp := f.path + ".tmp"
+	if err := os.WriteFile(tmp, append(b, '\n'), 0o600); err != nil {
+		return err
+	}
+	return os.Rename(tmp, f.path)
 }
 
 func applyDefaults(h, d *Host) {

@@ -32,6 +32,22 @@ func TestLoadAndResolve(t *testing.T) {
 	if err != nil || pw != "from-env" {
 		t.Fatalf("env password: %q %v", pw, err)
 	}
+	// Save keeps entries as written (defaults are not baked into hosts).
+	f.Set("new", Host{Address: "10.0.0.3", Generation: GenIDRAC8})
+	f.Delete("r710")
+	if err := f.Save(); err != nil {
+		t.Fatal(err)
+	}
+	f2, err := Load(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := f2.Hosts["r710"]; ok || f2.Hosts["new"].Address != "10.0.0.3" || f2.Hosts["pmx"].Username != "" || f2.Defaults.Username != "admin" {
+		t.Fatalf("after save: %+v / pmx %+v", f2.Hosts, f2.Hosts["pmx"])
+	}
+	if st, _ := os.Stat(p); st.Mode().Perm() != 0o600 {
+		t.Fatalf("mode %v", st.Mode())
+	}
 	if _, err := Load(filepath.Join(dir, "missing.json")); err != nil {
 		t.Fatalf("missing file should be empty config, got %v", err)
 	}

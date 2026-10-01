@@ -22,7 +22,7 @@ gofmt -l . | grep . && { echo "gofmt: files above need formatting" >&2; exit 1; 
 go vet ./...
 go test ./...
 
-if CGO_ENABLED=1 go vet -tags gui ./... 2>bin/.gui-build.log && CGO_ENABLED=1 go test -tags gui ./pkg/viewer/ \
+if CGO_ENABLED=1 go vet -tags gui ./... 2>bin/.gui-build.log && CGO_ENABLED=1 go test -tags gui ./... \
   && CGO_ENABLED=1 go build -tags gui -trimpath -ldflags="$LDFLAGS" -o bin/idrac ./cmd/idrac; then
   echo "built bin/idrac (with viewer)" >&2
 else

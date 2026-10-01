@@ -32,8 +32,11 @@ func openDevice(ctx context.Context, g *globals) (Device, error) {
 	if err != nil {
 		return nil, err
 	}
-	if gen == config.GenIDRAC6 {
+	switch gen {
+	case config.GenIDRAC6:
 		return openIDRAC6(ctx, g)
+	case config.GenDemo:
+		return demoDevice{}, nil
 	}
 	c, err := g.redfishClient(ctx)
 	if err != nil {

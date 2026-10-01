@@ -56,6 +56,9 @@ type Options struct {
 	// ScreenshotDir is where File > Save Screenshot writes (default: cwd).
 	ScreenshotDir string
 
+	// OnClosed, if set, is called on the UI goroutine after the window closes.
+	OnClosed func()
+
 	// ExitAfter closes the window after this long (smoke tests).
 	ExitAfter time.Duration
 }

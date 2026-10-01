@@ -44,7 +44,7 @@ func cmdHosts(ctx context.Context, g *globals, args []string) error {
 	}
 	rows := [][]string{}
 	for _, n := range g.cfg.Names() {
-		h := g.cfg.Hosts[n]
+		h := g.cfg.Resolve(n)
 		rows = append(rows, []string{n, h.Address, string(h.Generation), h.Username, h.Description})
 	}
 	g.table([]string{"NAME", "ADDRESS", "GEN", "USER", "DESCRIPTION"}, rows)
@@ -260,10 +260,10 @@ func cmdRacadm(ctx context.Context, g *globals, args []string) error {
 	}
 	fmt.Fprint(g.out, res.Stdout)
 	if res.Stderr != "\n" {
-		fmt.Fprint(os.Stderr, res.Stderr)
+		fmt.Fprint(g.errw, res.Stderr)
 	}
 	if res.ExitCode != 0 {
-		os.Exit(res.ExitCode)
+		return &exitError{res.ExitCode}
 	}
 	return nil
 }
@@ -292,12 +292,12 @@ func cmdRedfish(ctx context.Context, g *globals, args []string) error {
 	resp, err := c.Do(ctx, method, args[1], body)
 	if err != nil {
 		if resp != nil && len(resp.Body) > 0 && g.verbose {
-			fmt.Fprintln(os.Stderr, string(resp.Body))
+			fmt.Fprintln(g.errw, string(resp.Body))
 		}
 		return err
 	}
 	if resp.Location != "" {
-		fmt.Fprintf(os.Stderr, "HTTP %d Location: %s\n", resp.Status, resp.Location)
+		fmt.Fprintf(g.errw, "HTTP %d Location: %s\n", resp.Status, resp.Location)
 	}
 	if len(strings.TrimSpace(string(resp.Body))) == 0 {
 		fmt.Fprintf(g.out, "HTTP %d\n", resp.Status)

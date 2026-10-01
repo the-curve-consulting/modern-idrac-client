@@ -13,6 +13,7 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"runtime"
 	"sort"
 	"strings"
 	"syscall"
@@ -21,6 +22,7 @@ import (
 
 	"idrac/pkg/config"
 	"idrac/pkg/redfish"
+	"idrac/pkg/viewer"
 )
 
 // globals holds the flags shared by every subcommand.
@@ -39,8 +41,18 @@ type globals struct {
 	cfg    *config.File
 	target *config.Host
 	logger *log.Logger
-	out    io.Writer
+	out    io.Writer // command output (stdout)
+	errw   io.Writer // diagnostics that are not errors (stderr)
+	// tableSink, when set, receives tables instead of them being printed;
+	// the GUI uses it to show real tables.
+	tableSink func(header []string, rows [][]string)
 }
+
+// exitError asks main to exit with a specific status without printing
+// anything (the command already produced its output).
+type exitError struct{ code int }
+
+func (e *exitError) Error() string { return fmt.Sprintf("exit status %d", e.code) }
 
 type command struct {
 	name, usage, help string
@@ -53,7 +65,7 @@ var commands []*command
 func register(c *command) { commands = append(commands, c) }
 
 func main() {
-	g := &globals{out: os.Stdout}
+	g := &globals{out: os.Stdout, errw: os.Stderr}
 	fs := flag.NewFlagSet("idrac", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	fs.StringVar(&g.configPath, "config", "", "hosts file (default: $IDRAC_CONFIG, ./idrac.json, ~/.config/idrac/hosts.json)")
@@ -83,6 +95,19 @@ func main() {
 	}
 	args := fs.Args()
 	if len(args) == 0 {
+		// No command: open the manager window when this build has one and
+		// there is a display to put it on; otherwise explain the CLI.
+		if viewer.Available && haveDisplay() {
+			cfg, err := config.Load(g.configPath)
+			if err != nil {
+				fatal(err)
+			}
+			g.cfg = cfg
+			if err := runGUI(g); err != nil {
+				fatal(err)
+			}
+			return
+		}
 		usage(fs)
 		os.Exit(2)
 	}
@@ -108,6 +133,16 @@ func main() {
 	if err := cmd.run(ctx, g, args[1:]); err != nil {
 		fatal(err)
 	}
+}
+
+// haveDisplay reports whether a graphical session is available. Only Linux
+// and the BSDs can lack one; Windows and macOS always have a desktop.
+func haveDisplay() bool {
+	switch runtime.GOOS {
+	case "windows", "darwin":
+		return true
+	}
+	return os.Getenv("DISPLAY") != "" || os.Getenv("WAYLAND_DISPLAY") != ""
 }
 
 // resolveTarget turns -host into g.target, applying the command-line
@@ -138,6 +173,10 @@ func fatal(err error) {
 	if errors.Is(err, flag.ErrHelp) {
 		os.Exit(0) // usage was already printed
 	}
+	var ee *exitError
+	if errors.As(err, &ee) {
+		os.Exit(ee.code)
+	}
 	fmt.Fprintln(os.Stderr, "idrac:", err)
 	os.Exit(1)
 }
@@ -152,7 +191,7 @@ func lookup(name string) *command {
 }
 
 func usage(fs *flag.FlagSet) {
-	fmt.Fprintf(os.Stderr, "usage: idrac [global flags] <command> [args]\n\nGlobal flags:\n")
+	fmt.Fprintf(os.Stderr, "usage: idrac                                   open the graphical manager\n       idrac [global flags] <command> [args]   run one command\n\nGlobal flags:\n")
 	fs.PrintDefaults()
 	fmt.Fprintf(os.Stderr, "\nCommands:\n")
 	sort.Slice(commands, func(i, j int) bool { return commands[i].name < commands[j].name })
@@ -244,6 +283,10 @@ func (g *globals) printJSON(v any) error {
 
 // table prints rows with aligned columns.
 func (g *globals) table(header []string, rows [][]string) {
+	if g.tableSink != nil {
+		g.tableSink(header, rows)
+		return
+	}
 	tw := tabwriter.NewWriter(g.out, 2, 4, 2, ' ', 0)
 	if header != nil {
 		fmt.Fprintln(tw, strings.Join(header, "\t"))

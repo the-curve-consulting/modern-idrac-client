@@ -56,15 +56,32 @@ type gui struct {
 	menu         *fyne.MainMenu
 }
 
-// Run opens the viewer window and blocks until it is closed. It must be
-// called from the main goroutine.
+// Run opens a single viewer window as its own application and blocks until
+// it is closed. It must be called from the main goroutine.
 func Run(o Options) error {
 	if o.Connect == nil {
 		return errors.New("viewer: Options.Connect is required")
 	}
-	g := newGUI(o, app.NewWithID("io.thecurve.idrac.viewer"))
+	a := app.NewWithID("io.thecurve.idrac.viewer")
+	Open(a, o)
+	a.Run()
+	return nil
+}
+
+// Open shows a viewer window inside an existing Fyne application and returns
+// immediately; the session is torn down when the window is closed. It must be
+// called on the UI goroutine. The manager GUI uses this to open one console
+// window per server.
+func Open(a fyne.App, o Options) fyne.Window {
+	g := newGUI(o, a)
 	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	g.win.SetOnClosed(func() {
+		cancel()
+		g.closeBackend()
+		if o.OnClosed != nil {
+			o.OnClosed()
+		}
+	})
 	go g.connect(ctx)
 	go g.paintLoop(ctx)
 	go g.statusLoop(ctx)
@@ -75,10 +92,8 @@ func Run(o Options) error {
 			fyne.Do(g.quit)
 		}()
 	}
-	g.win.ShowAndRun()
-	cancel()
-	g.closeBackend()
-	return nil
+	g.win.Show()
+	return g.win
 }
 
 // newGUI builds the window, widgets and menus without showing anything, so

@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
 	"sort"
 	"strings"
 
@@ -57,7 +56,7 @@ func cmdWeb(ctx context.Context, g *globals, args []string) error {
 			return g.printJSON(m)
 		}
 		if g.verbose {
-			fmt.Fprintln(os.Stderr, string(raw))
+			fmt.Fprintln(g.errw, string(raw))
 		}
 		keys := make([]string, 0, len(m))
 		for k := range m {
@@ -94,7 +93,7 @@ func cmdWeb(ctx context.Context, g *globals, args []string) error {
 		if err != nil {
 			return err
 		}
-		fmt.Fprintf(os.Stderr, "HTTP %d\n", status)
+		fmt.Fprintf(g.errw, "HTTP %d\n", status)
 		fmt.Fprintln(g.out, string(out))
 		return nil
 	case "jnlp":

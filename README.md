@@ -1,9 +1,9 @@
 # idrac — native Go client for Dell iDRAC6/7/8/9
 
-A single static binary that replaces the Java tooling for the office iDRACs:
-inventory, power, sensors, logs, racadm, raw Redfish / legacy-web calls, and
-the **remote console (KVM) without Java** — screenshots, key and mouse
-injection, and a VNC bridge so any VNC viewer becomes the console.
+One binary that replaces the Java tooling for the office iDRACs, as a
+graphical manager and as a CLI: inventory, power, sensors, logs, racadm, raw
+Redfish / legacy-web calls, and the **remote console (KVM) without Java** — a
+native console window, screenshots, key and mouse injection, and a VNC bridge.
 
 | Surface | iDRAC6 (r710) | iDRAC7/8 (pmx nodes) | iDRAC9 |
 |---|---|---|---|
@@ -11,6 +11,34 @@ injection, and a VNC bridge so any VNC viewer becomes the console.
 | Redfish | n/a | yes | yes |
 | Legacy web API (`/data?get=`) | yes | yes (unused when Redfish works) | partial |
 | Virtual console (Avocent APCP/DVC protocol) | yes | yes (protocol v2.34, see `docs/kvm-idrac8-notes.md`) | untested |
+
+## Graphical manager
+
+Run `idrac` with no arguments to open the manager window:
+
+- **Host list** with add, edit and remove. Entries are saved to the hosts file,
+  and each shows its generation and whether it is reachable.
+- **Open Console** opens the remote console window for the selected server.
+  Several can be open at once.
+- **Tabs per server**: Overview (power, next boot, identify LED), Sensors,
+  Logs (event log and lifecycle log, clear), Jobs, Virtual Media, BIOS,
+  Accounts, racadm, raw API calls (Redfish and the legacy web API), and
+  Maintenance (configuration profile export/import, firmware update, iDRAC
+  attributes, probe, reboot the iDRAC).
+
+Every tab runs the corresponding CLI command in-process, so the GUI and the
+command line always behave the same. Anything that changes state asks first.
+
+Passwords follow the hosts file (stored, environment variable, 1Password
+reference or command). With none configured, the manager asks once per session
+and keeps the answer in memory only. A rejected password is forgotten and never
+retried automatically, because iDRACs lock accounts.
+
+To try it with no hardware, add a host with generation "Demo": it serves canned
+data and a test-pattern console.
+
+The interactive `ssh` shell is the one CLI function without a tab; use the
+racadm tab, or `idrac -host <h> ssh` in a terminal.
 
 ## Build
 

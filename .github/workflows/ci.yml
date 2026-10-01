@@ -43,6 +43,6 @@ jobs:
       - name: Vet, test and build with the viewer
         run: |
           go vet -tags gui ./...
-          go test -tags gui ./pkg/viewer/
+          go test -tags gui ./...
           go build -tags gui -o /tmp/idrac ./cmd/idrac
           /tmp/idrac version
