@@ -106,7 +106,7 @@ its own layout, absolute mouse, and menus for
 The status bar shows connection state, resolution, frame rate and host power
 state. If the session drops, it offers to reconnect.
 
-The window needs cgo and OpenGL/X11 headers at build time (`-tags gui`);
+The window needs cgo and OpenGL, X11 and Wayland headers at build time (`-tags gui`; on Debian/Ubuntu: `gcc libgl1-mesa-dev xorg-dev libxkbcommon-dev libwayland-dev libegl1-mesa-dev`);
 `./run.sh` and `./build.sh` enable it automatically and fall back to a
 window-less binary if the toolchain is missing. The cross-compiled binaries
 from `./build.sh all` have no window; use `kvm vnc` there, which is also the way

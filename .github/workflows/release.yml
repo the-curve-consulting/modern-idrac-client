@@ -42,7 +42,7 @@ jobs:
         if: matrix.gui && runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends gcc libgl1-mesa-dev xorg-dev libxkbcommon-dev
+          sudo apt-get install -y --no-install-recommends gcc libgl1-mesa-dev xorg-dev libxkbcommon-dev libwayland-dev libegl1-mesa-dev
 
       - name: Test
         if: matrix.goarch == 'amd64' || runner.os == 'macOS'
