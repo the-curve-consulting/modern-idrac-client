@@ -1,0 +1,113 @@
+name: Release
+
+# Push a tag like v0.1.0 to build every platform and publish a GitHub release.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing tag to (re)build and publish"
+        required: true
+
+permissions:
+  contents: write
+
+env:
+  TAG: ${{ github.event.inputs.tag || github.ref_name }}
+
+jobs:
+  build:
+    name: ${{ matrix.goos }}/${{ matrix.goarch }}${{ matrix.gui && ' (viewer)' || '' }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Built on 22.04 so the binary runs against older glibc too.
+          - { os: ubuntu-22.04, goos: linux, goarch: amd64, gui: true }
+          # Cross-compiled without cgo: CLI + VNC bridge, no window.
+          - { os: ubuntu-22.04, goos: linux, goarch: arm64, gui: false }
+          - { os: macos-latest, goos: darwin, goarch: arm64, gui: true }
+          - { os: windows-latest, goos: windows, goarch: amd64, gui: true }
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TAG }}
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Install viewer build dependencies (Linux)
+        if: matrix.gui && runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends gcc libgl1-mesa-dev xorg-dev libxkbcommon-dev
+
+      - name: Test
+        if: matrix.goarch == 'amd64' || runner.os == 'macOS'
+        shell: bash
+        run: |
+          go test ./...
+          if [ "${{ matrix.gui }}" = "true" ]; then go test -tags gui ./pkg/viewer/; fi
+
+      - name: Build
+        shell: bash
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+        run: |
+          set -euo pipefail
+          tags=""; cgo=0; suffix="-cli"
+          if [ "${{ matrix.gui }}" = "true" ]; then tags="-tags gui"; cgo=1; suffix=""; fi
+          name="idrac-${TAG}-${GOOS}-${GOARCH}${suffix}"
+          bin=idrac; [ "$GOOS" = windows ] && bin=idrac.exe
+          mkdir -p "dist/$name"
+          CGO_ENABLED=$cgo go build $tags -trimpath -ldflags "-s -w -X main.version=${TAG}" -o "dist/$name/$bin" ./cmd/idrac
+          cp README.md idrac.example.json "dist/$name/"
+          cd dist
+          if [ "$GOOS" = windows ]; then
+            7z a -tzip "$name.zip" "$name" >/dev/null
+          else
+            tar czf "$name.tar.gz" "$name"
+          fi
+          rm -rf "$name"
+          ls -la
+
+      - name: Smoke test
+        if: matrix.goarch == 'amd64' || runner.os == 'macOS'
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd dist && mkdir t && cd t
+          if ls ../*.zip >/dev/null 2>&1; then 7z x ../*.zip >/dev/null; else tar xzf ../*.tar.gz; fi
+          ./*/idrac* version
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: idrac-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: |
+            dist/*.tar.gz
+            dist/*.zip
+          if-no-files-found: error
+
+  publish:
+    needs: build
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Checksums
+        run: cd dist && sha256sum * > SHA256SUMS && cat SHA256SUMS
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" dist/* --clobber
+          else
+            gh release create "$TAG" dist/* --title "$TAG" --generate-notes
+          fi

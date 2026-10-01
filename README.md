@@ -23,6 +23,24 @@ go build -o idrac ./cmd/idrac   # plain go build works too
 
 Go 1.27+. The CLI depends only on `golang.org/x/crypto` (SSH) and `golang.org/x/term`; the viewer adds Fyne.
 
+### Releases
+
+Every push and pull request runs CI (format, vet, tests, both builds).
+Pushing a tag publishes a GitHub release with binaries:
+
+```sh
+git tag v0.2.0 && git push origin v0.2.0
+```
+
+| Archive | Viewer window |
+|---|---|
+| `idrac-<tag>-linux-amd64.tar.gz` | yes |
+| `idrac-<tag>-darwin-arm64.tar.gz` | yes |
+| `idrac-<tag>-windows-amd64.zip` | yes |
+| `idrac-<tag>-linux-arm64-cli.tar.gz` | no (CLI and `kvm vnc`) |
+
+`idrac version` shows which build you have.
+
 ## Configure hosts
 
 Copy `idrac.example.json` to `~/.config/idrac/hosts.json` (or `./idrac.json`,

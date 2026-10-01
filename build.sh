@@ -9,12 +9,13 @@
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")"
 mkdir -p bin
+LDFLAGS="-s -w -X main.version=$(git describe --tags --always --dirty 2>/dev/null || echo dev)"
 
 cross() {
   local os=$1 arch=$2 out=bin/idrac-$1-$2
   [[ $os == windows ]] && out+=.exe
   echo "building $out (no viewer)" >&2
-  CGO_ENABLED=0 GOOS=$os GOARCH=$arch go build -trimpath -ldflags='-s -w' -o "$out" ./cmd/idrac
+  CGO_ENABLED=0 GOOS=$os GOARCH=$arch go build -trimpath -ldflags="$LDFLAGS" -o "$out" ./cmd/idrac
 }
 
 gofmt -l . | grep . && { echo "gofmt: files above need formatting" >&2; exit 1; }
@@ -22,11 +23,11 @@ go vet ./...
 go test ./...
 
 if CGO_ENABLED=1 go vet -tags gui ./... 2>bin/.gui-build.log && CGO_ENABLED=1 go test -tags gui ./pkg/viewer/ \
-  && CGO_ENABLED=1 go build -tags gui -trimpath -ldflags='-s -w' -o bin/idrac ./cmd/idrac; then
+  && CGO_ENABLED=1 go build -tags gui -trimpath -ldflags="$LDFLAGS" -o bin/idrac ./cmd/idrac; then
   echo "built bin/idrac (with viewer)" >&2
 else
   echo "viewer build failed (see bin/.gui-build.log); building without it" >&2
-  CGO_ENABLED=0 go build -trimpath -ldflags='-s -w' -o bin/idrac ./cmd/idrac
+  CGO_ENABLED=0 go build -trimpath -ldflags="$LDFLAGS" -o bin/idrac ./cmd/idrac
   echo "built bin/idrac (no viewer)" >&2
 fi
 

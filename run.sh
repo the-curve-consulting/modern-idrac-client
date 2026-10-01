@@ -13,6 +13,7 @@ set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")"
 BIN=./bin/idrac
 mkdir -p bin
+LDFLAGS="-s -w -X main.version=$(git describe --tags --always --dirty 2>/dev/null || echo dev)"
 
 needs_build() {
   [[ "${IDRAC_BUILD:-0}" == 1 ]] && return 0
@@ -22,11 +23,11 @@ needs_build() {
 }
 
 if needs_build; then
-  if [[ "${IDRAC_NOGUI:-0}" != 1 ]] && CGO_ENABLED=1 go build -tags gui -trimpath -ldflags='-s -w' -o "$BIN" ./cmd/idrac 2>bin/.gui-build.log; then
+  if [[ "${IDRAC_NOGUI:-0}" != 1 ]] && CGO_ENABLED=1 go build -tags gui -trimpath -ldflags="$LDFLAGS" -o "$BIN" ./cmd/idrac 2>bin/.gui-build.log; then
     echo "built $BIN (with viewer)" >&2
   else
     [[ "${IDRAC_NOGUI:-0}" != 1 ]] && echo "viewer build failed (see bin/.gui-build.log); building without it" >&2
-    CGO_ENABLED=0 go build -trimpath -ldflags='-s -w' -o "$BIN" ./cmd/idrac
+    CGO_ENABLED=0 go build -trimpath -ldflags="$LDFLAGS" -o "$BIN" ./cmd/idrac
     echo "built $BIN (no viewer)" >&2
   fi
 fi

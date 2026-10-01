@@ -1,0 +1,48 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Format
+        run: |
+          out=$(gofmt -l .)
+          if [ -n "$out" ]; then echo "needs gofmt:"; echo "$out"; exit 1; fi
+
+      - name: Vet and test (CLI, no cgo)
+        env:
+          CGO_ENABLED: "0"
+        run: |
+          go vet ./...
+          go test ./...
+          go build -o /tmp/idrac-nogui ./cmd/idrac
+          /tmp/idrac-nogui version
+
+      - name: Install viewer build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends gcc libgl1-mesa-dev xorg-dev libxkbcommon-dev
+
+      - name: Vet, test and build with the viewer
+        run: |
+          go vet -tags gui ./...
+          go test -tags gui ./pkg/viewer/
+          go build -tags gui -o /tmp/idrac ./cmd/idrac
+          /tmp/idrac version
