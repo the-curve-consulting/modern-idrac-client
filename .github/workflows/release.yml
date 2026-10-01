@@ -80,8 +80,9 @@ jobs:
         run: |
           set -euo pipefail
           cd dist && mkdir t && cd t
-          if ls ../*.zip >/dev/null 2>&1; then 7z x ../*.zip >/dev/null; else tar xzf ../*.tar.gz; fi
-          ./*/idrac* version
+          bin=idrac
+          if ls ../*.zip >/dev/null 2>&1; then 7z x ../*.zip >/dev/null; bin=idrac.exe; else tar xzf ../*.tar.gz; fi
+          ./idrac-*/"$bin" version
 
       - uses: actions/upload-artifact@v7
         with:
