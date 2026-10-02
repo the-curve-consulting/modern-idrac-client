@@ -23,6 +23,8 @@ import (
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/dialog"
 	"fyne.io/fyne/v2/driver/desktop"
+	"fyne.io/fyne/v2/layout"
+	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
 )
 
@@ -32,22 +34,37 @@ const Available = true
 type gui struct {
 	opts Options
 	app  fyne.App
-	win  fyne.Window
+	win  fyne.Window // the window the console is shown in
+	// embedded: part of another window's layout (see Panel), with a toolbar
+	// in place of the main menu, rather than a window of its own.
+	embedded bool
+	content  fyne.CanvasObject
+	tools    fyne.CanvasObject // embedded only
+	popOut   func()            // embedded only: move to a window of its own
+	onClose  func()            // own window only: called once as it closes
 
 	screen *screen
+	idle   *fyne.Container // stands in for the screen while there is no session
+	note   *widget.Label
+	act    *widget.Button
 	status *widget.Label
 	info   *widget.Label
 	power  *widget.Label
 
+	ctx  context.Context // ends when the console is closed for good
+	done context.CancelFunc
+
 	mu      sync.Mutex
 	backend Backend
 	unsub   func()
-	gen     int // bumps on every (re)connect
+	stop    context.CancelFunc // set while a session is open or being opened
+	gen     int                // bumps on every (re)connect
 
 	viewOnly  atomic.Bool
 	dirty     atomic.Bool
 	painting  atomic.Bool
 	connected atomic.Bool
+	paused    atomic.Bool // embedded and out of view: nothing to paint
 	fps       atomic.Int64
 
 	viewOnlyItem *fyne.MenuItem
@@ -63,59 +80,164 @@ func Run(o Options) error {
 		return errors.New("viewer: Options.Connect is required")
 	}
 	a := app.NewWithID("io.thecurve.idrac.viewer")
-	Open(a, o)
+	g := newGUI(o, a, nil)
+	g.start()
+	if o.ExitAfter > 0 {
+		go func() {
+			time.Sleep(o.ExitAfter)
+			g.ui(g.quit)
+		}()
+	}
+	g.win.Show()
 	a.Run()
 	return nil
 }
 
-// Open shows a viewer window inside an existing Fyne application and returns
-// immediately; the session is torn down when the window is closed. It must be
-// called on the UI goroutine. The manager GUI uses this to open one console
-// window per server.
-func Open(a fyne.App, o Options) fyne.Window {
-	g := newGUI(o, a)
-	ctx, cancel := context.WithCancel(context.Background())
-	g.win.SetOnClosed(func() {
-		cancel()
-		g.closeBackend()
-		if o.OnClosed != nil {
-			o.OnClosed()
-		}
-	})
-	go g.connect(ctx)
-	go g.paintLoop(ctx)
-	go g.statusLoop(ctx)
-	go g.screen.motionLoop(ctx)
-	if o.ExitAfter > 0 {
-		go func() {
-			time.Sleep(o.ExitAfter)
-			fyne.Do(g.quit)
-		}()
-	}
-	g.win.Show()
-	return g.win
+// Panel is a console that is part of another window's layout: the manager
+// shows one per server as its Console tab. It connects only when asked, and
+// can move to a window of its own and back without dropping the session. Its
+// methods must be called on the UI goroutine.
+type Panel struct {
+	g   *gui // the embedded console
+	pop *gui // its own window, while popped out
 }
 
-// newGUI builds the window, widgets and menus without showing anything, so
-// tests can drive it with Fyne's software test driver.
-func newGUI(o Options, a fyne.App) *gui {
+// NewPanel builds a console to be shown inside host, which also parents its
+// dialogs. Nothing connects until the user asks, or Connect is called.
+func NewPanel(a fyne.App, host fyne.Window, o Options) *Panel {
+	p := &Panel{g: newGUI(o, a, host)}
+	p.g.popOut = p.popOut
+	return p
+}
+
+// Content is the panel's widget tree, to be placed in the host's layout.
+func (p *Panel) Content() fyne.CanvasObject { return p.g.content }
+
+// Connect opens the session unless one is open or on its way.
+func (p *Panel) Connect() {
+	if p.pop != nil {
+		p.pop.start()
+		return
+	}
+	p.g.start()
+}
+
+// Connected reports whether a session is open, here or in the panel's window.
+func (p *Panel) Connected() bool {
+	return p.g.current() != nil || p.pop != nil && p.pop.current() != nil
+}
+
+// SetActive tells the panel whether it is in view. Out of view it stops
+// painting and gives up the keyboard, so that nothing typed elsewhere reaches
+// the server; the session itself stays open.
+func (p *Panel) SetActive(on bool) {
+	g := p.g
+	g.paused.Store(!on)
+	if !on {
+		g.blur()
+		return
+	}
+	g.dirty.Store(true)
+	if g.current() != nil {
+		g.focusScreen()
+	}
+}
+
+// Close ends the session and closes the panel's window, if it has one. The
+// panel cannot be used afterwards.
+func (p *Panel) Close() {
+	if w := p.pop; w != nil {
+		p.pop, w.onClose = nil, nil
+		w.quit()
+	}
+	p.g.shut()
+}
+
+// popOut moves the console, session included, to a window of its own.
+// Closing that window brings it back.
+func (p *Panel) popOut() {
+	g := p.g
+	w := newGUI(g.opts, g.app, nil)
+	p.pop = w
+	w.onClose = func() {
+		p.pop = nil
+		g.tools.Show()
+		g.offer("Not connected", "Not connected", "Connect")
+		handOver(w, g)
+	}
+	g.tools.Hide()
+	handOver(g, w)
+	g.status.SetText("In its own window")
+	g.info.SetText("")
+	g.power.SetText("")
+	g.showIdle("The console is open in its own window.", "Bring Back", w.quit)
+	w.win.Show()
+}
+
+// handOver moves the session and view settings from one console to another.
+// A session that was still being opened is opened afresh.
+func handOver(from, to *gui) {
+	to.viewOnly.Store(from.viewOnly.Load())
+	to.viewOnlyItem.Checked = from.viewOnlyItem.Checked
+	to.smoothItem.Checked = from.smoothItem.Checked
+	to.screen.setSmooth(to.smoothItem.Checked)
+	opening := from.busy()
+	switch b := from.release(); {
+	case b != nil:
+		to.adopt(b)
+	case opening:
+		to.start()
+	}
+}
+
+// newGUI builds the console's widgets and menus without showing anything, so
+// tests can drive it with Fyne's software test driver. Given a host window
+// the console is embedded in that window's layout (g.content); without one it
+// gets a window of its own.
+func newGUI(o Options, a fyne.App, host fyne.Window) *gui {
 	if o.Title == "" {
 		o.Title = "iDRAC console"
 	}
-	g := &gui{opts: o, app: a}
+	g := &gui{opts: o, app: a, win: host, embedded: host != nil}
+	g.ctx, g.done = context.WithCancel(context.Background())
 	g.viewOnly.Store(o.ViewOnly)
-	g.win = a.NewWindow(o.Title + " — iDRAC console")
 	g.screen = newScreen(g)
-	g.status = widget.NewLabel("Connecting…")
+	g.status = widget.NewLabel("")
 	g.info = widget.NewLabel("")
 	g.power = widget.NewLabel("")
+	g.note = widget.NewLabel("")
+	g.note.Alignment = fyne.TextAlignCenter
+	g.note.Wrapping = fyne.TextWrapWord
+	g.act = widget.NewButton("", nil)
+	g.act.Importance = widget.HighImportance
+	g.idle = container.NewVBox(layout.NewSpacer(), g.note, container.NewCenter(g.act), layout.NewSpacer())
+	view := container.NewStack(g.screen, g.idle)
 	bar := container.NewBorder(nil, nil, g.status, container.NewHBox(g.info, g.power))
-	g.win.SetContent(container.NewBorder(nil, bar, nil, nil, g.screen))
 	g.buildMenu()
-	g.win.Resize(fyne.NewSize(1024, 768+80))
-	g.win.SetCloseIntercept(g.quit)
-	g.win.Canvas().Focus(g.screen)
+	if g.embedded {
+		g.paused.Store(true)
+		g.tools = g.toolbar()
+		g.content = container.NewBorder(g.tools, bar, nil, nil, view)
+	} else {
+		g.win = a.NewWindow(o.Title + " — iDRAC console")
+		g.content = container.NewBorder(nil, bar, nil, nil, view)
+		g.win.SetContent(g.content)
+		g.win.SetMainMenu(g.menu)
+		g.win.Resize(fyne.NewSize(1024, 768+80))
+		g.win.SetCloseIntercept(g.quit)
+		g.win.SetOnClosed(g.shut)
+	}
+	g.offer("Not connected", "Not connected", "Connect")
 	return g
+}
+
+// ui runs fn on the UI goroutine.
+func (g *gui) ui(fn func()) {
+	if g.opts.Do != nil {
+		g.opts.Do(fn)
+		return
+	}
+	fyne.Do(fn)
 }
 
 func (g *gui) logf(format string, args ...any) {
@@ -130,10 +252,22 @@ func (g *gui) current() Backend {
 	return g.backend
 }
 
-func (g *gui) closeBackend() {
+// busy reports whether a session is open or being opened.
+func (g *gui) busy() bool {
 	g.mu.Lock()
-	b, unsub := g.backend, g.unsub
-	g.backend, g.unsub = nil, nil
+	defer g.mu.Unlock()
+	return g.stop != nil
+}
+
+// release gives up the session without closing it, so that another console
+// can adopt it.
+func (g *gui) release() Backend {
+	g.mu.Lock()
+	b, unsub, stop := g.backend, g.unsub, g.stop
+	g.backend, g.unsub, g.stop = nil, nil, nil
+	if stop != nil {
+		stop() // under the lock: connect relies on it to tell whose session it has
+	}
 	g.mu.Unlock()
 	g.connected.Store(false)
 	if unsub != nil {
@@ -141,37 +275,169 @@ func (g *gui) closeBackend() {
 	}
 	if b != nil {
 		b.ReleaseAllKeys()
+	}
+	return b
+}
+
+func (g *gui) closeBackend() {
+	if b := g.release(); b != nil {
 		b.Close()
 	}
 }
 
+// quit closes the console's own window.
 func (g *gui) quit() {
-	g.closeBackend()
+	g.shut()
 	g.win.Close()
+}
+
+// shut ends the console for good.
+func (g *gui) shut() {
+	if g.ctx.Err() != nil {
+		return
+	}
+	if g.onClose != nil {
+		g.onClose() // the panel takes the session back
+	}
+	g.done()
+	g.closeBackend()
+}
+
+func (g *gui) focusScreen() {
+	if !g.paused.Load() {
+		g.win.Canvas().Focus(g.screen)
+	}
+}
+
+// blur gives up the keyboard, which also releases any held keys.
+func (g *gui) blur() {
+	if c := g.win.Canvas(); c.Focused() == fyne.Focusable(g.screen) {
+		c.Unfocus()
+	}
+}
+
+// tapGuard is how long the idle pane's button ignores taps after changing.
+const tapGuard = 500 * time.Millisecond
+
+// showIdle replaces the screen with a note and one button. The button often
+// takes the place of the one just tapped (Connect becomes Cancel, and back),
+// so it ignores taps for a moment: the second of a double tap is not for it.
+func (g *gui) showIdle(note, button string, tapped func()) {
+	shown := time.Now()
+	g.note.SetText(note)
+	g.act.OnTapped = func() {
+		if time.Since(shown) >= tapGuard {
+			tapped()
+		}
+	}
+	g.act.SetText(button)
+	g.screen.Hide()
+	g.idle.Show()
+	g.idle.Refresh() // lay out again around the new texts
+}
+
+// offer says why there is no session and offers to open one.
+func (g *gui) offer(status, why, button string) {
+	if g.busy() {
+		return
+	}
+	g.status.SetText(status)
+	g.info.SetText("")
+	g.power.SetText("")
+	g.showIdle(why, button, g.start)
+}
+
+// begin claims the session and starts the loops that last as long as it does.
+// It returns nil if there is a session already.
+func (g *gui) begin() context.Context {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if g.stop != nil || g.ctx.Err() != nil {
+		return nil
+	}
+	ctx, stop := context.WithCancel(g.ctx)
+	g.stop = stop
+	go g.paintLoop(ctx)
+	go g.statusLoop(ctx)
+	go g.screen.motionLoop(ctx)
+	return ctx
+}
+
+// start opens a session unless one is open or on its way.
+func (g *gui) start() {
+	ctx := g.begin()
+	if ctx == nil {
+		return
+	}
+	g.status.SetText("Connecting…")
+	g.showIdle("Connecting…", "Cancel", g.disconnect)
+	go g.connect(ctx)
+}
+
+// adopt takes over a session that another console released.
+func (g *gui) adopt(b Backend) {
+	ctx := g.begin()
+	if ctx == nil {
+		b.Close()
+		return
+	}
+	g.mu.Lock()
+	g.attach(b)
+	g.mu.Unlock()
+	go g.watch(ctx, b)
+}
+
+func (g *gui) disconnect() {
+	g.closeBackend()
+	g.offer("Not connected", "Not connected", "Connect")
+}
+
+// attach makes b the session; g.mu must be held.
+func (g *gui) attach(b Backend) {
+	g.backend = b
+	g.gen++
+	g.unsub = b.Framebuffer().Subscribe(func(image.Rectangle) { g.dirty.Store(true) })
 }
 
 // connect opens the session and watches for its end.
 func (g *gui) connect(ctx context.Context) {
-	fyne.Do(func() { g.status.SetText("Connecting…") })
 	b, err := g.opts.Connect(ctx)
+	g.mu.Lock()
+	if ctx.Err() != nil { // cancelled, handed over or closed meanwhile
+		g.mu.Unlock()
+		if err == nil {
+			b.Close()
+		}
+		return
+	}
 	if err != nil {
+		stop := g.stop
+		g.stop = nil
+		g.mu.Unlock()
+		stop()
 		g.logf("connect: %v", err)
-		fyne.Do(func() {
-			g.status.SetText("Not connected")
-			g.offerReconnect(ctx, fmt.Sprintf("Could not open the console:\n\n%v", err))
+		g.ui(func() {
+			g.offer("Not connected", fmt.Sprintf("Could not open the console:\n\n%v", err), "Reconnect")
 		})
 		return
 	}
-	g.mu.Lock()
-	g.backend = b
-	g.gen++
-	g.unsub = b.Framebuffer().Subscribe(func(image.Rectangle) { g.dirty.Store(true) })
+	g.attach(b)
 	g.mu.Unlock()
+	g.watch(ctx, b)
+}
+
+// watch shows the session's screen and waits for the session to end.
+func (g *gui) watch(ctx context.Context, b Backend) {
 	g.connected.Store(true)
 	g.dirty.Store(true)
-	fyne.Do(func() {
+	g.ui(func() {
+		if g.current() != b {
+			return
+		}
 		g.status.SetText("Connected")
-		g.win.Canvas().Focus(g.screen)
+		g.idle.Hide()
+		g.screen.Show()
+		g.focusScreen()
 	})
 	select {
 	case <-ctx.Done():
@@ -179,28 +445,14 @@ func (g *gui) connect(ctx context.Context) {
 	case <-b.Done():
 	}
 	if g.current() != b {
-		return // replaced or closed deliberately
+		return // replaced, handed over or closed deliberately
 	}
 	reason := "The console session ended."
 	if err := b.Err(); err != nil {
 		reason = fmt.Sprintf("The console session ended:\n\n%v", err)
 	}
 	g.closeBackend()
-	fyne.Do(func() {
-		g.status.SetText("Disconnected")
-		g.offerReconnect(ctx, reason)
-	})
-}
-
-func (g *gui) offerReconnect(ctx context.Context, reason string) {
-	d := dialog.NewConfirm("Console disconnected", reason+"\n\nReconnect?", func(yes bool) {
-		if yes {
-			go g.connect(ctx)
-		}
-	}, g.win)
-	d.SetConfirmText("Reconnect")
-	d.SetDismissText("Close")
-	d.Show()
+	g.ui(func() { g.offer("Disconnected", reason, "Reconnect") })
 }
 
 // paintLoop copies the framebuffer to the screen at most ~30 times a second.
@@ -213,7 +465,7 @@ func (g *gui) paintLoop(ctx context.Context) {
 			return
 		case <-t.C:
 		}
-		if !g.dirty.Load() || g.painting.Load() {
+		if g.paused.Load() || !g.dirty.Load() || g.painting.Load() {
 			continue
 		}
 		b := g.current()
@@ -223,7 +475,7 @@ func (g *gui) paintLoop(ctx context.Context) {
 		g.dirty.Store(false)
 		g.painting.Store(true)
 		fb := b.Framebuffer()
-		fyne.Do(func() {
+		g.ui(func() {
 			defer g.painting.Store(false)
 			g.screen.update(fb)
 		})
@@ -263,8 +515,14 @@ func (g *gui) statusLoop(ctx context.Context) {
 				text += "   view only"
 			}
 		}
-		fyne.Do(func() { g.info.SetText(text) })
-		if g.opts.Actions.PowerState != nil && tick%20 == 1 {
+		g.ui(func() {
+			if ctx.Err() == nil {
+				g.info.SetText(text)
+			}
+		})
+		// Only once connected: asking any earlier could prompt for the
+		// password a second time while Connect is still asking.
+		if b != nil && g.opts.Actions.PowerState != nil && tick%20 == 1 {
 			go g.refreshPower(ctx)
 		}
 	}
@@ -278,7 +536,11 @@ func (g *gui) refreshPower(ctx context.Context) {
 		g.logf("power state: %v", err)
 		return
 	}
-	fyne.Do(func() { g.power.SetText("Power: " + st) })
+	g.ui(func() {
+		if ctx.Err() == nil {
+			g.power.SetText("Power: " + st)
+		}
+	})
 }
 
 // ---- menus ----
@@ -292,8 +554,9 @@ func (g *gui) buildMenu() {
 		fyne.NewMenuItemSeparator(),
 		fyne.NewMenuItem("Reconnect", func() {
 			g.closeBackend()
-			go g.connect(context.Background())
+			g.start()
 		}),
+		fyne.NewMenuItem("Disconnect", g.disconnect),
 	)
 
 	g.viewOnlyItem = fyne.NewMenuItem("View Only", func() {
@@ -314,24 +577,23 @@ func (g *gui) buildMenu() {
 		g.menu.Refresh()
 	})
 	g.smoothItem.Checked = true
-	g.fullItem = fyne.NewMenuItem("Full Screen", func() {
-		full := !g.win.FullScreen()
-		g.win.SetFullScreen(full)
-		g.fullItem.Checked = full
-		g.menu.Refresh()
-	})
 	view := fyne.NewMenu("View",
 		fyne.NewMenuItem("Refresh Screen", func() {
 			if b := g.current(); b != nil {
 				go b.Refresh()
 			}
 		}),
-		fyne.NewMenuItem("Actual Size (1:1)", g.actualSize),
-		g.fullItem,
-		g.smoothItem,
-		fyne.NewMenuItemSeparator(),
-		g.viewOnlyItem,
 	)
+	if !g.embedded { // these two act on the window
+		g.fullItem = fyne.NewMenuItem("Full Screen", func() {
+			full := !g.win.FullScreen()
+			g.win.SetFullScreen(full)
+			g.fullItem.Checked = full
+			g.menu.Refresh()
+		})
+		view.Items = append(view.Items, fyne.NewMenuItem("Actual Size (1:1)", g.actualSize), g.fullItem)
+	}
+	view.Items = append(view.Items, g.smoothItem, fyne.NewMenuItemSeparator(), g.viewOnlyItem)
 
 	var macroItems []*fyne.MenuItem
 	for _, m := range Macros {
@@ -395,12 +657,29 @@ func (g *gui) buildMenu() {
 			}))
 	}
 	menus = append(menus, fyne.NewMenu("Tools", tools...))
-	menus = append(menus, fyne.NewMenu("Help", fyne.NewMenuItem("About", func() {
-		dialog.ShowInformation("About", "idrac viewer\n\nNative Go console for Dell iDRAC6/7/8.\nKeys the window manager intercepts (Super, Alt+Tab,\nCtrl+Alt+Del, …) are in the Macros menu.", g.win)
-	})))
+	if !g.embedded { // the host window has its own Help
+		menus = append(menus, fyne.NewMenu("Help", fyne.NewMenuItem("About", func() {
+			dialog.ShowInformation("About", "idrac viewer\n\nNative Go console for Dell iDRAC6/7/8.\nKeys the window manager intercepts (Super, Alt+Tab,\nCtrl+Alt+Del, …) are in the Macros menu.", g.win)
+		})))
+	}
 
 	g.menu = fyne.NewMainMenu(menus...)
-	g.win.SetMainMenu(g.menu)
+}
+
+// toolbar stands in for the main menu of an embedded console, which has no
+// window to hang one on: a button per menu, and the way out to a window.
+func (g *gui) toolbar() fyne.CanvasObject {
+	left := container.NewHBox()
+	for _, m := range g.menu.Items {
+		var b *widget.Button
+		b = widget.NewButton(m.Label, func() {
+			widget.ShowPopUpMenuAtRelativePosition(m, g.win.Canvas(), fyne.NewPos(0, b.Size().Height), b)
+		})
+		b.Importance = widget.LowImportance
+		left.Add(b)
+	}
+	pop := widget.NewButtonWithIcon("Pop Out", theme.ViewFullScreenIcon(), func() { g.popOut() })
+	return container.NewBorder(nil, nil, left, pop)
 }
 
 func (g *gui) macroItem(m Macro) *fyne.MenuItem {
@@ -414,7 +693,7 @@ func (g *gui) macroItem(m Macro) *fyne.MenuItem {
 				g.logf("macro %s: %v", m.Name, err)
 			}
 		}()
-		g.win.Canvas().Focus(g.screen)
+		g.focusScreen()
 	})
 }
 
@@ -423,7 +702,7 @@ func (g *gui) confirmAction(title, question string, fn func(context.Context) err
 		if yes {
 			g.runAction(title, fn)
 		}
-		g.win.Canvas().Focus(g.screen)
+		g.focusScreen()
 	}, g.win)
 }
 
@@ -434,7 +713,7 @@ func (g *gui) runAction(title string, fn func(context.Context) error) {
 		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 		defer cancel()
 		err := fn(ctx)
-		fyne.Do(func() {
+		g.ui(func() {
 			if err != nil {
 				g.status.SetText(title + ": failed")
 				dialog.ShowError(fmt.Errorf("%s: %w", title, err), g.win)
@@ -520,7 +799,7 @@ func (g *gui) pasteText() {
 		g.status.SetText(fmt.Sprintf("Typing %d characters…", len([]rune(text))))
 		go func() {
 			err := b.TypeString(text, 25*time.Millisecond)
-			fyne.Do(func() {
+			g.ui(func() {
 				if err != nil {
 					dialog.ShowError(err, g.win)
 					return
@@ -538,7 +817,7 @@ func (g *gui) pasteText() {
 			if yes {
 				send()
 			}
-			g.win.Canvas().Focus(g.screen)
+			g.focusScreen()
 		}, g.win)
 		return
 	}

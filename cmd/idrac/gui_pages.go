@@ -24,6 +24,7 @@ type page struct {
 	body   fyne.CanvasObject
 	load   func()
 	loaded bool
+	shown  func(bool) // if set, told when the tab comes into and goes out of view
 }
 
 // selectHost builds the tabbed view for a host.
@@ -31,11 +32,15 @@ func (m *manager) selectHost(name string) {
 	if name == m.selected && len(m.detail.Objects) > 0 {
 		return
 	}
+	if p, ok := m.consoles[m.selected]; ok {
+		p.SetActive(false) // the host going out of view may be showing its console
+	}
 	m.selected = name
 	h := m.g.cfg.Resolve(name)
 
 	pages := []*page{
 		m.overviewPage(name),
+		m.consolePage(name),
 		m.tablePage(name, "Sensors", "reading sensors", func() []string { return []string{"sensors"} }),
 		m.logsPage(name),
 		m.jobsPage(name),
@@ -55,21 +60,31 @@ func (m *manager) selectHost(name string) {
 	}
 	tabs := container.NewAppTabs(items...)
 	show := func(it *container.TabItem) {
-		if p := byItem[it]; p != nil && !p.loaded && p.load != nil {
+		p := byItem[it]
+		if p == nil {
+			return
+		}
+		if !p.loaded && p.load != nil {
 			p.loaded = true
 			p.load()
 		}
+		if p.shown != nil {
+			p.shown(true)
+		}
 	}
 	tabs.OnSelected = show
+	tabs.OnUnselected = func(it *container.TabItem) {
+		if p := byItem[it]; p != nil && p.shown != nil {
+			p.shown(false)
+		}
+	}
 
 	title := widget.NewLabelWithStyle(name, fyne.TextAlignLeading, fyne.TextStyle{Bold: true})
 	sub := h.Address
 	if h.Description != "" {
 		sub += "  ·  " + h.Description
 	}
-	console := widget.NewButtonWithIcon("Open Console", theme.ComputerIcon(), func() { m.openConsole(name) })
-	console.Importance = widget.HighImportance
-	header := container.NewBorder(nil, nil, row(title, widget.NewLabel(sub)), console)
+	header := row(title, widget.NewLabel(sub))
 
 	m.detail.Objects = []fyne.CanvasObject{container.NewBorder(header, nil, nil, nil, tabs)}
 	m.detail.Refresh()
@@ -83,6 +98,13 @@ func (m *manager) selectHost(name string) {
 			}
 		}
 	}
+}
+
+// consolePage is the remote console. It connects only when asked: a session
+// takes one of the iDRAC's few console slots.
+func (m *manager) consolePage(name string) *page {
+	p := m.console(name)
+	return &page{title: "Console", body: p.Content(), shown: p.SetActive}
 }
 
 // showErr puts a command failure where the user is looking.

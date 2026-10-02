@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -50,13 +51,13 @@ func (f *fakeBackend) Refresh() error                             { return f.add
 func (f *fakeBackend) Stats() string                              { return "stats" }
 func (f *fakeBackend) Done() <-chan struct{}                      { return f.done }
 func (f *fakeBackend) Err() error                                 { return nil }
-func (f *fakeBackend) Close() error                               { return nil }
+func (f *fakeBackend) Close() error                               { return f.add("close") }
 
 func setup(t *testing.T, o Options) (*gui, *fakeBackend) {
 	t.Helper()
 	a := test.NewApp()
 	t.Cleanup(a.Quit)
-	g := newGUI(o, a)
+	g := newGUI(o, a, nil)
 	f := newFake()
 	g.mu.Lock()
 	g.backend = f
@@ -153,4 +154,170 @@ func TestMenusFollowActions(t *testing.T) {
 	nop := func(context.Context, string) error { return nil }
 	g2, _ := setup(t, Options{Actions: Actions{Power: nop, BootOnce: nop, Identify: func(context.Context, bool) error { return nil }}})
 	eq(t, names(g2), "File", "View", "Macros", "Power", "Next Boot", "Tools", "Help")
+}
+
+// uiMu serialises UI callbacks: Fyne's test driver runs them on the calling
+// goroutine, where they would otherwise interleave with the test.
+var uiMu sync.Mutex
+
+// onUI runs fn the way the UI goroutine would: serialised with callbacks.
+func onUI(fn func()) {
+	uiMu.Lock()
+	defer uiMu.Unlock()
+	fn()
+}
+
+func waitFor(t *testing.T, what string, cond func() bool) {
+	t.Helper()
+	for deadline := time.Now().Add(5 * time.Second); time.Now().Before(deadline); time.Sleep(10 * time.Millisecond) {
+		ok := false
+		onUI(func() { ok = cond() })
+		if ok {
+			return
+		}
+	}
+	t.Fatalf("timed out waiting for %s", what)
+}
+
+func TestPanelPopsOutAndBackKeepingTheSession(t *testing.T) {
+	a := test.NewApp()
+	t.Cleanup(a.Quit)
+	f := newFake()
+	opened := 0
+	var p *Panel
+	var g, w *gui
+	onUI(func() {
+		host := a.NewWindow("host")
+		p = NewPanel(a, host, Options{Do: onUI, Connect: func(context.Context) (Backend, error) {
+			opened++
+			return f, nil
+		}})
+		host.SetContent(p.Content())
+		g = p.g
+
+		// An embedded console has a toolbar, not a window's menus, and waits to be asked.
+		var names []string
+		for _, m := range g.menu.Items {
+			names = append(names, m.Label)
+		}
+		eq(t, names, "File", "View", "Macros", "Tools")
+		if g.fullItem != nil || p.Connected() || g.busy() || g.screen.Visible() {
+			t.Fatal("a new panel must be idle, with no window-only menu items")
+		}
+		p.Connect()
+		p.Connect() // already on its way
+	})
+	waitFor(t, "the session", func() bool { return p.Connected() && g.screen.Visible() })
+
+	// Out of view it keeps the session but not the keyboard.
+	onUI(func() {
+		p.SetActive(true)
+		if g.win.Canvas().Focused() != fyne.Focusable(g.screen) {
+			t.Fatal("an active panel takes the keyboard")
+		}
+		g.screen.KeyDown(&fyne.KeyEvent{Name: fyne.KeyA, Physical: fyne.HardwareKey{ScanCode: 38}})
+		p.SetActive(false)
+		if g.win.Canvas().Focused() != nil || !p.Connected() {
+			t.Fatal("an inactive panel gives up the keyboard, not the session")
+		}
+	})
+	time.Sleep(50 * time.Millisecond)
+	eq(t, f.take(), "down 0x4", "release")
+
+	onUI(func() {
+		g.viewOnlyItem.Action() // settings travel with the session
+		g.popOut()
+		w = p.pop
+	})
+	waitFor(t, "the window's screen", func() bool { return w.screen.Visible() })
+	onUI(func() {
+		if w.current() != Backend(f) || g.current() != nil || g.screen.Visible() || g.tools.Visible() || !w.viewOnly.Load() {
+			t.Fatal("popping out moves the session to the window")
+		}
+		w.quit()
+	})
+	waitFor(t, "the panel's screen", func() bool { return g.screen.Visible() })
+	onUI(func() {
+		if p.pop != nil || g.current() != Backend(f) || !g.tools.Visible() || !g.viewOnly.Load() {
+			t.Fatal("closing the window brings the session back")
+		}
+		eq(t, f.take(), "release", "release", "release") // view only, then handed over twice; never closed
+		if opened != 1 {
+			t.Fatalf("connected %d times", opened)
+		}
+
+		p.Close()
+		eq(t, f.take(), "release", "close")
+		p.Connect()
+		if g.busy() {
+			t.Fatal("a closed panel must stay closed")
+		}
+	})
+}
+
+func TestSessionEndOffersReconnect(t *testing.T) {
+	a := test.NewApp()
+	t.Cleanup(a.Quit)
+	f := newFake()
+	var fail atomic.Bool
+	fail.Store(true)
+	var g *gui
+	onUI(func() {
+		p := NewPanel(a, a.NewWindow("host"), Options{Do: onUI, Connect: func(context.Context) (Backend, error) {
+			if fail.Load() {
+				return nil, fmt.Errorf("no route")
+			}
+			return f, nil
+		}})
+		g = p.g
+		p.Connect()
+	})
+	waitFor(t, "the failure", func() bool { return !g.busy() && g.act.Text == "Reconnect" })
+	onUI(func() {
+		if g.screen.Visible() || g.note.Text != "Could not open the console:\n\nno route" {
+			t.Fatalf("note %q", g.note.Text)
+		}
+		fail.Store(false)
+	})
+	time.Sleep(tapGuard)
+	onUI(func() { test.Tap(g.act) })
+	waitFor(t, "the session", func() bool { return g.screen.Visible() })
+	close(f.done)
+	waitFor(t, "the end", func() bool { return !g.busy() && !g.screen.Visible() })
+	onUI(func() {
+		if g.note.Text != "The console session ended." || g.status.Text != "Disconnected" {
+			t.Fatalf("note %q status %q", g.note.Text, g.status.Text)
+		}
+	})
+	eq(t, f.take(), "release", "close")
+}
+
+func TestDoubleTapDoesNotCancelTheConnect(t *testing.T) {
+	a := test.NewApp()
+	t.Cleanup(a.Quit)
+	var g *gui
+	onUI(func() {
+		// A connect that takes until it is cancelled.
+		p := NewPanel(a, a.NewWindow("host"), Options{Do: onUI, Connect: func(ctx context.Context) (Backend, error) {
+			<-ctx.Done()
+			return nil, ctx.Err()
+		}})
+		g = p.g
+	})
+	time.Sleep(tapGuard)
+	onUI(func() {
+		test.Tap(g.act) // Connect, which turns into Cancel under the pointer
+		test.Tap(g.act)
+		if !g.busy() || g.act.Text != "Cancel" {
+			t.Fatal("the second tap of a double tap must not cancel")
+		}
+	})
+	time.Sleep(tapGuard)
+	onUI(func() {
+		test.Tap(g.act) // a deliberate Cancel, which turns back into Connect
+		test.Tap(g.act)
+		if g.busy() || g.act.Text != "Connect" {
+			t.Fatal("a later tap cancels, and its double does not reconnect")
+		}
+	})
 }

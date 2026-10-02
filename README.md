@@ -18,9 +18,11 @@ Run `idrac` with no arguments to open the manager window:
 
 - **Host list** with add, edit and remove. Entries are saved to the hosts file,
   and each shows its generation and whether it is reachable.
-- **Open Console** opens the remote console window for the selected server.
-  Several can be open at once.
-- **Tabs per server**: Overview (power, next boot, identify LED), Sensors,
+- **Console tab** per server: the remote console, connected when you press
+  Connect. A session stays open while you look at other tabs or servers, and
+  **Pop Out** moves it to a window of its own (closing that window brings it
+  back), so several can be on screen at once.
+- **Other tabs per server**: Overview (power, next boot, identify LED), Sensors,
   Logs (event log and lifecycle log, clear), Jobs, Virtual Media, BIOS,
   Accounts, racadm, raw API calls (Redfish and the legacy web API), and
   Maintenance (configuration profile export/import, firmware update, iDRAC
@@ -29,10 +31,15 @@ Run `idrac` with no arguments to open the manager window:
 Every tab runs the corresponding CLI command in-process, so the GUI and the
 command line always behave the same. Anything that changes state asks first.
 
+The manager starts with no server selected, so nothing is read (and no
+password asked for) until you pick one.
+
 Passwords follow the hosts file (stored, environment variable, 1Password
 reference or command). With none configured, the manager asks once per session
-and keeps the answer in memory only. A rejected password is forgotten and never
-retried automatically, because iDRACs lock accounts.
+and keeps the answer in memory only, unless you tick "Save in the hosts file":
+then it is stored there, in plain text, once the iDRAC has accepted it. A
+rejected password is forgotten and never retried automatically, because iDRACs
+lock accounts.
 
 To try it with no hardware, add a host with generation "Demo": it serves canned
 data and a test-pattern console.

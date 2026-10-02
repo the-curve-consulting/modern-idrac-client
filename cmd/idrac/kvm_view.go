@@ -32,7 +32,7 @@ func kvmView(ctx context.Context, g *globals, o kvmOpts) error {
 		ViewOnly:  o.viewOnly,
 		Logger:    g.logger,
 		ExitAfter: o.exitAfter,
-		Actions:   viewerActions(g),
+		Actions:   viewerActions(func(context.Context) (*globals, error) { return g, nil }),
 		Connect:   func(ctx context.Context) (viewer.Backend, error) { return connectBackend(ctx, g, o) },
 	})
 }
@@ -137,9 +137,15 @@ func (b *consoleBackend) Stats() string {
 }
 
 // viewerActions wires the Power / Next Boot / Identify menus to the
-// out-of-band API of whatever generation the target is.
-func viewerActions(g *globals) viewer.Actions {
+// out-of-band API of whatever generation the target is. The target is asked
+// for on each use, so the manager can leave resolving it (and asking for its
+// password) until then.
+func viewerActions(target func(context.Context) (*globals, error)) viewer.Actions {
 	with := func(ctx context.Context, fn func(Device) error) error {
+		g, err := target(ctx)
+		if err != nil {
+			return err
+		}
 		d, err := openDevice(ctx, g)
 		if err != nil {
 			return err

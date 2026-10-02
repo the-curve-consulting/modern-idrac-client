@@ -59,9 +59,12 @@ type manager struct {
 	pages    []*page
 
 	mu        sync.Mutex
-	passwords map[string]string
+	passwords map[string]string // entered or resolved this session
+	unsaved   map[string]string // entered ones to write to the hosts file once accepted
 	probes    map[string]probeResult
-	consoles  map[string]fyne.Window
+	// ask asks the user for a host's password, and whether to save it.
+	ask      func(h *config.Host) (pw string, save bool, err error)
+	consoles map[string]*viewer.Panel // by host; they outlive host selection
 }
 
 // runGUI opens the manager window and blocks until it is closed.
@@ -69,7 +72,9 @@ func runGUI(g *globals) error {
 	a := app.NewWithID("io.thecurve.idrac")
 	m := newManager(g, a)
 	m.win.SetMaster()
-	config.PromptPassword = m.promptPassword
+	// The manager asks for missing passwords itself (hostFor), so that it
+	// can offer to save them.
+	config.PromptPassword = nil
 	if d, err := time.ParseDuration(os.Getenv("IDRAC_GUI_EXIT_AFTER")); err == nil && d > 0 {
 		go func() { // smoke tests
 			time.Sleep(d)
@@ -81,8 +86,14 @@ func runGUI(g *globals) error {
 }
 
 func newManager(g *globals, a fyne.App) *manager {
-	m := &manager{g: g, app: a, passwords: map[string]string{}, probes: map[string]probeResult{}, consoles: map[string]fyne.Window{}}
+	m := &manager{g: g, app: a, passwords: map[string]string{}, unsaved: map[string]string{}, probes: map[string]probeResult{}, consoles: map[string]*viewer.Panel{}}
+	m.ask = m.askPassword
 	m.win = a.NewWindow("iDRAC Manager")
+	m.win.SetOnClosed(func() { // log out of the consoles: an iDRAC has few slots
+		for name := range m.consoles {
+			m.dropConsole(name)
+		}
+	})
 	m.status = widget.NewLabel("Ready")
 	m.status.Truncation = fyne.TextTruncateEllipsis
 	m.busy = widget.NewProgressBarInfinite()
@@ -139,7 +150,7 @@ func newManager(g *globals, a fyne.App) *manager {
 			fyne.NewMenuItem("Refresh Status", m.probeAll),
 			fyne.NewMenuItem("Forget Entered Passwords", func() {
 				m.mu.Lock()
-				m.passwords = map[string]string{}
+				m.passwords, m.unsaved = map[string]string{}, map[string]string{}
 				m.mu.Unlock()
 				m.setStatus("Passwords forgotten; you will be asked again")
 			}),
@@ -149,7 +160,9 @@ func newManager(g *globals, a fyne.App) *manager {
 		})),
 	))
 
-	m.reloadHosts("")
+	// Nothing is selected to begin with: showing a host reads from it, which
+	// may ask for its password. IDRAC_GUI_HOST names one to start on (smoke tests).
+	m.reloadHosts(os.Getenv("IDRAC_GUI_HOST"))
 	m.probeAll()
 	return m
 }
@@ -203,10 +216,6 @@ func (m *manager) reloadHosts(selectName string) {
 	}
 	m.selected = ""
 	m.list.UnselectAll()
-	if len(m.names) > 0 {
-		m.list.Select(0)
-		return
-	}
 	m.showWelcome()
 }
 
@@ -307,7 +316,13 @@ func probeHost(h *config.Host) probeResult {
 	return res
 }
 
+// showWelcome fills the detail pane while no host is selected.
 func (m *manager) showWelcome() {
+	if len(m.names) > 0 {
+		m.detail.Objects = []fyne.CanvasObject{container.NewCenter(widget.NewLabel("Select an iDRAC from the list"))}
+		m.detail.Refresh()
+		return
+	}
 	msg := widget.NewLabelWithStyle("No iDRACs configured yet", fyne.TextAlignCenter, fyne.TextStyle{Bold: true})
 	hint := widget.NewLabelWithStyle("Hosts are stored in "+m.g.cfg.Path(), fyne.TextAlignCenter, fyne.TextStyle{})
 	add := widget.NewButtonWithIcon("Add an iDRAC", theme.ContentAddIcon(), func() { m.editHost("") })
@@ -438,12 +453,13 @@ func (m *manager) editHost(name string) {
 			dialog.ShowError(err, m.win)
 			return
 		}
+		m.forgetPassword(name)
+		m.forgetPassword(newName)
 		m.mu.Lock()
-		delete(m.passwords, name)
-		delete(m.passwords, newName)
 		delete(m.probes, name)
 		delete(m.probes, newName)
 		m.mu.Unlock()
+		m.dropConsole(name)
 		m.selected = ""
 		m.reloadHosts(newName)
 		m.probeAll()
@@ -467,6 +483,7 @@ func (m *manager) removeHost() {
 			dialog.ShowError(err, m.win)
 			return
 		}
+		m.dropConsole(name)
 		m.selected = ""
 		m.reloadHosts("")
 		m.setStatus("Removed %s", name)
@@ -475,33 +492,69 @@ func (m *manager) removeHost() {
 
 // ---- credentials and command execution ----
 
-// promptPassword is installed as config.PromptPassword: it is called off the
-// UI goroutine and blocks until the dialog is answered.
-func (m *manager) promptPassword(prompt string) (string, error) {
+// askPassword asks for a host's password and whether to save it. It is called
+// off the UI goroutine and blocks until the dialog is answered.
+func (m *manager) askPassword(h *config.Host) (pw string, save bool, err error) {
 	type answer struct {
-		pw string
-		ok bool
+		pw       string
+		save, ok bool
 	}
 	ch := make(chan answer, 1)
 	m.ui(func() {
 		e := widget.NewPasswordEntry()
+		keep := widget.NewCheck("Save in the hosts file (plain text)", nil)
 		d := dialog.NewForm("Password required", "OK", "Cancel",
-			[]*widget.FormItem{widget.NewFormItem(strings.TrimSuffix(strings.TrimSpace(prompt), ":"), e)},
-			func(ok bool) { ch <- answer{e.Text, ok} }, m.win)
-		d.Resize(fyne.NewSize(460, 160))
+			[]*widget.FormItem{
+				widget.NewFormItem(fmt.Sprintf("Password for %s@%s", h.Username, h.Address), e),
+				widget.NewFormItem("", keep),
+			},
+			func(ok bool) { ch <- answer{e.Text, keep.Checked, ok} }, m.win)
+		d.Resize(fyne.NewSize(460, 200))
 		d.Show()
 		m.win.Canvas().Focus(e)
 	})
 	a := <-ch
 	if !a.ok || a.pw == "" {
-		return "", errors.New("password entry cancelled")
+		return "", false, errors.New("password entry cancelled")
 	}
-	return a.pw, nil
+	return a.pw, a.save, nil
+}
+
+// forgetPassword drops a host's entered password, so that the next action
+// asks again.
+func (m *manager) forgetPassword(name string) {
+	m.mu.Lock()
+	delete(m.passwords, name)
+	delete(m.unsaved, name)
+	m.mu.Unlock()
+}
+
+// passwordWorked is called on the UI goroutine once the iDRAC has accepted a
+// host's password. If the user asked for it to be saved, this is when it is
+// written to the hosts file: a mistyped one never gets there, to be retried
+// until the account locks.
+func (m *manager) passwordWorked(name string) {
+	m.mu.Lock()
+	pw, ok := m.unsaved[name]
+	delete(m.unsaved, name)
+	m.mu.Unlock()
+	h, exists := m.g.cfg.Get(name)
+	if !ok || !exists {
+		return
+	}
+	h.Password = pw
+	m.g.cfg.Set(name, h)
+	if err := m.g.cfg.Save(); err != nil {
+		dialog.ShowError(fmt.Errorf("saving the password: %w", err), m.win)
+		return
+	}
+	m.setStatus("%s: password saved in %s", name, m.g.cfg.Path())
 }
 
 // hostFor returns a resolved copy of the host carrying its generation and
 // password, asking for the password once per session if no source is
-// configured. Call it off the UI goroutine.
+// configured (and remembering whether to save it once it has worked). Call
+// it off the UI goroutine.
 func (m *manager) hostFor(ctx context.Context, name string) (*config.Host, error) {
 	h := m.g.cfg.Resolve(name)
 	m.mu.Lock()
@@ -515,12 +568,19 @@ func (m *manager) hostFor(ctx context.Context, name string) (*config.Host, error
 		return h, nil
 	}
 	if !cached {
+		var save bool
 		var err error
-		if pw, err = h.ResolvePassword(ctx); err != nil {
+		if pw, err = h.ResolvePassword(ctx); errors.Is(err, config.ErrNoPassword) {
+			pw, save, err = m.ask(h)
+		}
+		if err != nil {
 			return nil, err
 		}
 		m.mu.Lock()
 		m.passwords[name] = pw
+		if save {
+			m.unsaved[name] = pw
+		}
 		m.mu.Unlock()
 	}
 	h.Password = pw
@@ -561,9 +621,7 @@ func (m *manager) exec(name, what string, done func(*cmdResult), args ...string)
 			res = runCaptured(ctx, m.g, h, args...)
 		}
 		if isAuthError(res.Err) {
-			m.mu.Lock()
-			delete(m.passwords, name)
-			m.mu.Unlock()
+			m.forgetPassword(name)
 		}
 		m.ui(func() {
 			m.stopBusy()
@@ -571,6 +629,7 @@ func (m *manager) exec(name, what string, done func(*cmdResult), args ...string)
 				m.setStatus("%s: %s failed: %v", name, what, res.Err)
 			} else {
 				m.setStatus("%s: %s done", name, what)
+				m.passwordWorked(name)
 			}
 			if done != nil {
 				done(res)
@@ -595,48 +654,58 @@ func (m *manager) confirmExec(name, title, question string, done func(*cmdResult
 	}, m.win)
 }
 
-// openConsole opens (or raises) the console window for a host.
-func (m *manager) openConsole(name string) {
-	if w, ok := m.consoles[name]; ok {
-		w.RequestFocus()
-		return
+// console returns the host's console panel, creating it on first use. A panel
+// is kept until its host is edited or removed, so a session carries on while
+// another host is shown.
+func (m *manager) console(name string) *viewer.Panel {
+	if p, ok := m.consoles[name]; ok {
+		return p
 	}
-	m.startBusy()
-	m.setStatus("%s: opening console…", name)
-	go func() {
-		h, err := m.hostFor(context.Background(), name)
-		m.ui(func() {
-			m.stopBusy()
+	h := m.g.cfg.Resolve(name)
+	title := name
+	if name != h.Address {
+		title = fmt.Sprintf("%s (%s)", name, h.Address)
+	}
+	// Resolved on use rather than here: that is what asks for the password.
+	target := func(ctx context.Context) (*globals, error) {
+		h, err := m.hostFor(ctx, name)
+		if err != nil {
+			return nil, err
+		}
+		hg := *m.g
+		hg.target, hg.host = h, h.Name
+		return &hg, nil
+	}
+	p := viewer.NewPanel(m.app, m.win, viewer.Options{
+		Title: title, Logger: m.g.logger, Actions: viewerActions(target), Do: m.ui,
+		Connect: func(ctx context.Context) (viewer.Backend, error) {
+			hg, err := target(ctx)
 			if err != nil {
-				m.setStatus("%s: %v", name, err)
-				dialog.ShowError(err, m.win)
-				return
+				return nil, err
 			}
-			hg := *m.g
-			hg.target, hg.host = h, h.Name
-			title := name
-			if name != h.Address {
-				title = fmt.Sprintf("%s (%s)", name, h.Address)
+			if hg.target.Generation == config.GenDemo {
+				return newDemoBackend(), nil
 			}
-			o := viewer.Options{Title: title, Logger: m.g.logger, Actions: viewerActions(&hg)}
-			if h.Generation == config.GenDemo {
-				o.Connect = func(ctx context.Context) (viewer.Backend, error) { return newDemoBackend(), nil }
-			} else {
-				o.Connect = func(ctx context.Context) (viewer.Backend, error) {
-					b, err := connectBackend(ctx, &hg, kvmOpts{})
-					if isAuthError(err) {
-						m.mu.Lock()
-						delete(m.passwords, name)
-						m.mu.Unlock()
-					}
-					return b, err
-				}
+			b, err := connectBackend(ctx, hg, kvmOpts{})
+			switch {
+			case isAuthError(err):
+				m.forgetPassword(name)
+			case err == nil:
+				m.ui(func() { m.passwordWorked(name) })
 			}
-			o.OnClosed = func() { delete(m.consoles, name) }
-			m.consoles[name] = viewer.Open(m.app, o)
-			m.setStatus("%s: console open", name)
-		})
-	}()
+			return b, err
+		},
+	})
+	m.consoles[name] = p
+	return p
+}
+
+// dropConsole ends a host's console session, if it has one.
+func (m *manager) dropConsole(name string) {
+	if p, ok := m.consoles[name]; ok {
+		p.Close()
+		delete(m.consoles, name)
+	}
 }
 
 // ---- small layout helpers ----

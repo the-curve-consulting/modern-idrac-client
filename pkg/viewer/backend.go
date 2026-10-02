@@ -1,7 +1,8 @@
-// Package viewer is the integrated graphical console: a native window showing
-// the remote screen with keyboard/mouse capture, a macros menu, power control,
-// next-boot selection, screenshots and session statistics — the functionality
-// of Dell's Java viewer, without Java.
+// Package viewer is the integrated graphical console: the remote screen with
+// keyboard/mouse capture, a macros menu, power control, next-boot selection,
+// screenshots and session statistics — the functionality of Dell's Java
+// viewer, without Java. It runs as a native window (Run) or as part of
+// another window's layout (Panel).
 //
 // The GUI itself (viewer_gui.go) needs cgo and OpenGL and is compiled only
 // with the "gui" build tag; this file and keys.go are toolkit-independent.
@@ -45,7 +46,7 @@ type Actions struct {
 	Identify func(ctx context.Context, on bool) error
 }
 
-// Options configures Run.
+// Options configures Run and NewPanel.
 type Options struct {
 	Title string // window title, e.g. "server01 (192.0.2.10)"
 	// Connect opens (or re-opens) the console session.
@@ -56,9 +57,10 @@ type Options struct {
 	// ScreenshotDir is where File > Save Screenshot writes (default: cwd).
 	ScreenshotDir string
 
-	// OnClosed, if set, is called on the UI goroutine after the window closes.
-	OnClosed func()
+	// Do, if set, runs the viewer's callbacks on the UI goroutine in place of
+	// fyne.Do; a host that serialises its own UI callbacks passes that here.
+	Do func(func())
 
-	// ExitAfter closes the window after this long (smoke tests).
+	// ExitAfter makes Run close the window after this long (smoke tests).
 	ExitAfter time.Duration
 }

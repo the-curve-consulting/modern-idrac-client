@@ -289,8 +289,12 @@ func (h *Host) ResolvePassword(ctx context.Context) (string, error) {
 	if PromptPassword != nil {
 		return PromptPassword(fmt.Sprintf("Password for %s@%s: ", h.Username, h.Address))
 	}
-	return "", fmt.Errorf("no password configured for %s (set IDRAC_PASSWORD, or password/password_env/password_ref/password_cmd in %s)", h.Name, DefaultPath())
+	return "", fmt.Errorf("%w for %s (set IDRAC_PASSWORD, or password/password_env/password_ref/password_cmd in %s)", ErrNoPassword, h.Name, DefaultPath())
 }
+
+// ErrNoPassword is returned (wrapped) by ResolvePassword when no password
+// source is configured and there is nobody to ask.
+var ErrNoPassword = errors.New("no password configured")
 
 // PromptPassword, when set, is called as a last resort to ask the user
 // interactively. The CLI installs a terminal prompt here when stdin is a TTY.
